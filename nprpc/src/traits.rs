@@ -62,6 +62,36 @@ pub const fn assert_unique(keys: &[Key]) {
     }
 }
 
+#[macro_export]
+macro_rules! merge_keylists {
+    ($($($segment:ident)::+$(,)?)*) => {{
+        const TOTAL_LEN: usize = $crate::traits::count_keys(
+            &[$(
+                $($segment)::+,
+            )*]
+        );
+        const ALL_KEYS_MERGED: [postcard_schema::key::Key; TOTAL_LEN] = const {
+            const ONE: postcard_schema::key::Key = unsafe {
+                postcard_schema::key::Key::from_bytes([0u8; 8])
+            };
+            let mut arr = [ONE; TOTAL_LEN];
+            let mut idx_arr = 0;
+            $(
+                let mut chidx = 0;
+                while chidx < $($segment)::+.len() {
+                    arr[idx_arr] = $($segment)::+[chidx];
+                    chidx += 1;
+                    idx_arr += 1;
+                }
+            )*
+            assert!(idx_arr == TOTAL_LEN);
+            arr
+        };
+        const SLI: &[postcard_schema::key::Key] = &ALL_KEYS_MERGED;
+        SLI
+    }};
+}
+
 // TODO: This kind of sucks, we probably want something like `Key::for_path<A, B>(path)`
 // that does full hashing instead of this mixing stuff. DO NOT just straight xor
 // `req_half ^ rsp_half`, if both types are the same then they just cancel out!
@@ -99,6 +129,7 @@ macro_rules! interface {
 
             /// Calculated keys for all methods in this interface
             pub mod keys {
+                #[allow(unused_imports)]
                 use super::*;
                 $(
                     #[allow(non_upper_case_globals)]
@@ -169,18 +200,12 @@ macro_rules! interface {
     };
 }
 
-/*
- * #[cfg(feature = "std")]
- * interface! {
- *      interface: BasicOps,
- *      client: BasicClientTrait,
- *      server: BasicServerTrait,
- *      | method            | request       | response      |
- *      | ------            | -------       | --------      |
- *      | mult_two          | u32           | u32           |
- *      | to_string         | u32           | String        |
- * };
- */
+interface! {
+     mod: ops,
+     | method            | request       | response      |
+     | ------            | -------       | --------      |
+     | mult_three        | u32           | u32           |
+}
 
 #[derive(Schema, Deserialize, Serialize)]
 pub struct Str<'a>(&'a str);
@@ -188,35 +213,95 @@ pub struct Str<'a>(&'a str);
 #[derive(Schema, Deserialize, Serialize)]
 pub struct Str2<'a, 'b>(&'a str, &'b str);
 
+#[cfg(not(feature = "std"))]
 interface! {
      mod: basic,
-     | method            | request       | response      |
-     | ------            | -------       | --------      |
-     | mult_two          | u32           | u32           |
-     | to_stringa        | u32           | Str<'b>       |
-     | to_stringb        | Str<'a>       | u32           |
-     | billy             | Str<'a>       | Str<'b>       |
-     | to_stringd        | Str<'a>       | Str2<'b, 'c>  |
+     | method     | request | response     |
+     | ------     | ------- | --------     |
+     | mult_two   | u32     | u32          |
+     | to_stringa | u32     | Str<'b>      |
+     | to_stringb | Str<'a> | u32          |
+     | billy      | Str<'a> | Str<'b>      |
+     | to_stringd | Str<'a> | Str2<'b, 'c> |
 }
 
-/*
- *
- * interface! {
- *      mod: two,
- *      | method            | request       | response      |
- *      | ------            | -------       | --------      |
- *      | one_more_thing    | u32           | bool          |
- * };
- *
- * compose_interfaces! [
- *      mod: composite,
- *      interfaces: [
- *          basic,
- *          two,
- *      ],
- * ];
- *
- * // compose_interfaces! expands to:
+#[cfg(feature = "std")]
+interface! {
+     mod: basic,
+     | method     | request | response     |
+     | ------     | ------- | --------     |
+     | mult_two   | u32     | u32          |
+     | to_stringa | u32     | String       |
+     | to_stringb | String  | u32          |
+     | billy      | String  | String       |
+     | to_stringd | String  | String       |
+}
+
+interface! {
+     mod: two,
+     | method         | request | response |
+     | ------         | ------- | -------- |
+     | one_more_thing | u32     | bool     |
+}
+
+macro_rules! compose_interfaces {
+    (
+        mod: $mod_name:ident,
+        interfaces: [
+            $($intfc:ident$(,)?)*
+        ]
+    ) => {
+        pub mod $mod_name {
+            pub trait Server: $(super::$intfc::Server+)* {
+                fn process_one<'buf>(
+                    &mut self,
+                    hdr: $crate::traits::Header,
+                    body: &[u8],
+                    output: &'buf mut [u8],
+                ) -> Result<&'buf mut [u8], $crate::traits::Error>;
+            }
+
+            impl<T> Server for T
+            where
+                $(T: super::$intfc::Server,)*
+            {
+                fn process_one<'buf>(
+                    &mut self,
+                    hdr: $crate::traits::Header,
+                    body: &[u8],
+                    output: &'buf mut [u8],
+                ) -> Result<&'buf mut [u8], $crate::traits::Error> {
+                    // Check all the merged keys to make sure that none of the composed
+                    // endpoints have a collision
+                    const MERGED_KEYS: &[postcard_schema::key::Key] = $crate::merge_keylists!(
+                        $(
+                            super::$intfc::keys::ALL_KEYS,
+                        )*
+                    );
+                    const _: () = $crate::traits::assert_unique(MERGED_KEYS);
+
+                    $(
+                        if super::$intfc::keys::ALL_KEYS.contains(&hdr.key) {
+                            return <Self as super::$intfc::Server>::process_one(self, hdr, body, output);
+                        }
+                    )*
+                    Err($crate::traits::Error::Unknown)
+                }
+            }
+        }
+    };
+}
+
+compose_interfaces! {
+     mod: composite,
+     interfaces: [
+         basic,
+         two,
+         ops,
+     ]
+}
+
+/* // compose_interfaces! expands to:
  * mod {
  *      trait Client: basic::Client + two::Client {}
  *      impl<B: Backend> Client for B
@@ -397,12 +482,12 @@ pub struct EndpointInfo {
 //     };
 // }
 
-// const fn count_endpoints(interfaces: &'static [&'static [EndpointInfo]]) -> usize {
-//     let mut idx = 0;
-//     let mut ct = 0;
-//     while idx < interfaces.len() {
-//         ct += interfaces[idx].len();
-//         idx += 1;
-//     }
-//     ct
-// }
+const fn count_keys(keys: &[&[Key]]) -> usize {
+    let mut idx = 0;
+    let mut ct = 0;
+    while idx < keys.len() {
+        ct += keys[idx].len();
+        idx += 1;
+    }
+    ct
+}

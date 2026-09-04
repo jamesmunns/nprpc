@@ -6,3 +6,7 @@ edition = "2024"
 [dependencies]
 postcard-schema = { version = "0.2.5", features = ["derive"] }
 serde = { version = "1.0.229", default-features = false, features = ["derive"] }
+
+[features]
+std = ["postcard-schema/use-std"]
+default = ["std"]
