@@ -1,5 +1,4 @@
 mod header;
-mod traits;
+pub mod traits;
 
-pub use header::endpoint_key;
-pub use traits::{Endpoint, EndpointInfo};
+pub use traits::{Endpoint, EndpointInfo, Request};
