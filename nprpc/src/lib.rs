@@ -201,7 +201,45 @@ macro_rules! interface {
                     }
                 }
             }
-            pub trait Client {}
+            pub trait Client {
+                $(
+                    #[allow(clippy::ptr_arg, clippy::needless_lifetimes)]
+                    fn $mthd<'me, $($($req_lt,)+)? $($($resp_lt,)+)?>(
+                        &'me mut self,
+                        req: &$req_ty $(< $($req_lt),+ >)?
+                    ) -> Result<
+                        Response<$resp_ty $(< $($resp_lt),+ >)?,>,
+                        Error,
+                    >
+                    where
+                        $($('me: $resp_lt,)+)?
+                    ;
+                )*
+            }
+
+            impl<T> Client for T
+            where
+                T: Backend,
+            {
+                $(
+                    #[allow(clippy::ptr_arg, clippy::needless_lifetimes)]
+                    fn $mthd<'me, $($($req_lt,)+)? $($($resp_lt,)+)?>(
+                        &'me mut self,
+                        req: &$req_ty $(< $($req_lt),+ >)?
+                    ) -> Result<
+                        Response<$resp_ty $(< $($resp_lt),+ >)?,>,
+                        Error,
+                    >
+                    where
+                        $($('me: $resp_lt,)+)?
+                    {
+                        self.send_reply::<$req_ty, $resp_ty>(
+                            keys::$mthd,
+                            req,
+                        )
+                    }
+                )*
+            }
         }
     };
 }
@@ -726,6 +764,9 @@ impl two::Server for ServerImpl {
 
 #[cfg(test)]
 mod test {
+    use crate::basic::Client;
+
+    use super::*;
 
     struct Buffers {
         inc: [u8; 256],
@@ -760,6 +801,26 @@ mod test {
         intfc: ServerInterface,
         seq: u16,
     }
+
+    impl TestClient {
+        /// Silly fake client that implements its "interface" by taking ownership
+        /// of the server and shoving the incoming requests into it, then spitting
+        /// the responses back out
+        #[allow(clippy::type_complexity)]
+        pub fn new(
+            hdlr: Box<dyn for<'a> FnMut(&Header, &[u8], &'a mut [u8]) -> Result<&'a [u8], Error>>,
+        ) -> Self {
+            TestClient {
+                buf: Buffers {
+                    inc: [0u8; 256],
+                    out: [0u8; 256],
+                },
+                intfc: ServerInterface { inner: hdlr },
+                seq: 0,
+            }
+        }
+    }
+
     impl Backend for TestClient {
         type Storage = Buffers;
         type Interface = ServerInterface;
@@ -776,22 +837,12 @@ mod test {
         }
     }
 
-    use super::*;
     #[test]
-    pub fn exercise() {
+    pub fn exercise_manual() {
         let mut x = ServerImpl;
-        let mut cli = TestClient {
-            buf: Buffers {
-                inc: [0u8; 256],
-                out: [0u8; 256],
-            },
-            intfc: ServerInterface {
-                inner: Box::new(move |hdr, inc, out| {
-                    <ServerImpl as composite::Server>::process_one(&mut x, hdr.clone(), inc, out)
-                }),
-            },
-            seq: 0,
-        };
+        let mut cli = TestClient::new(Box::new(move |hdr, inc, out| {
+            <ServerImpl as composite::Server>::process_one(&mut x, hdr.clone(), inc, out)
+        }));
 
         let res = cli
             .send_reply::<u32, u32>(endpoint_key2::<u32, u32>("mult_two"), &200)
@@ -801,20 +852,34 @@ mod test {
     }
 
     #[test]
+    pub fn exercise() {
+        // Make a Server...
+        let mut x = ServerImpl;
+
+        // ...then make a client with a Backend that wraps the whole server and
+        // just shuttles responses into and out of it (instead of transiting over
+        // a wire).
+        let mut cli = TestClient::new(Box::new(move |hdr, inc, out| {
+            <ServerImpl as composite::Server>::process_one(&mut x, hdr.clone(), inc, out)
+        }));
+
+        let res = cli.mult_two(&200).unwrap();
+        assert_eq!(res.hdr.method, Method::Response);
+        assert_eq!(res.hdr.seqno, 0);
+        assert_eq!(res.resp, 400u32);
+
+        let res = cli.to_stringa(&123).unwrap();
+        assert_eq!(res.hdr.method, Method::Response);
+        assert_eq!(res.hdr.seqno, 1);
+        assert_eq!(res.resp, "123");
+    }
+
+    #[test]
     pub fn exercise_borrowed() {
         let mut x = ServerImpl;
-        let mut cli = TestClient {
-            buf: Buffers {
-                inc: [0u8; 256],
-                out: [0u8; 256],
-            },
-            intfc: ServerInterface {
-                inner: Box::new(move |hdr, inc, out| {
-                    <ServerImpl as composite::Server>::process_one(&mut x, hdr.clone(), inc, out)
-                }),
-            },
-            seq: 0,
-        };
+        let mut cli = TestClient::new(Box::new(move |hdr, inc, out| {
+            <ServerImpl as composite::Server>::process_one(&mut x, hdr.clone(), inc, out)
+        }));
 
         let res = cli
             .send_reply::<Str, Str>(endpoint_key2::<Str, Str>("billy"), &Str("boop"))
@@ -836,6 +901,7 @@ mod test {
         for k in composite::keys::ALL_KEYS {
             println!("{k:?}");
         }
-        panic!();
+        // panic to print...
+        // panic!();
     }
 }
