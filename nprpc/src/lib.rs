@@ -259,7 +259,9 @@ macro_rules! compose_interfaces {
     (
         mod: $mod_name:ident,
         interfaces: [
-            $($intfc:ident$(,)?)*
+            $(
+                $($segment:ident)::+$(,)?
+            )*
         ]
     ) => {
         pub mod $mod_name {
@@ -267,12 +269,12 @@ macro_rules! compose_interfaces {
                 use postcard_schema_ng::schema::DataModelType;
                 pub const ALL_REQ_SCHEMAS: &[&DataModelType] = $crate::merge_schemalists!(
                     $(
-                        super::super::$intfc::schemas::ALL_REQ_SCHEMAS,
+                        $($segment)::+::schemas::ALL_REQ_SCHEMAS,
                     )*
                 );
                 pub const ALL_RESP_SCHEMAS: &[&DataModelType] = $crate::merge_schemalists!(
                     $(
-                        super::super::$intfc::schemas::ALL_RESP_SCHEMAS,
+                        $($segment)::+::schemas::ALL_RESP_SCHEMAS,
                     )*
                 );
             }
@@ -281,12 +283,12 @@ macro_rules! compose_interfaces {
                 use postcard_schema_ng::key::Key;
                 pub const ALL_KEYS: &[Key] = $crate::merge_keylists!(
                     $(
-                        super::super::$intfc::keys::ALL_KEYS,
+                        $($segment)::+::keys::ALL_KEYS,
                     )*
                 );
             }
 
-            pub trait Server: $(super::$intfc::Server+)* {
+            pub trait Server: $($($segment)::+::Server+)* {
                 fn process_one<'buf>(
                     &mut self,
                     hdr: $crate::Header,
@@ -297,7 +299,7 @@ macro_rules! compose_interfaces {
 
             impl<T> Server for T
             where
-                $(T: super::$intfc::Server,)*
+                $(T: $($segment)::+::Server,)*
             {
                 fn process_one<'buf>(
                     &mut self,
@@ -310,8 +312,8 @@ macro_rules! compose_interfaces {
                     const _: () = $crate::assert_unique(keys::ALL_KEYS);
 
                     $(
-                        if super::$intfc::keys::ALL_KEYS.contains(&hdr.key) {
-                            return <Self as super::$intfc::Server>::process_one(self, hdr, body, output);
+                        if $($segment)::+::keys::ALL_KEYS.contains(&hdr.key) {
+                            return <Self as $($segment)::+::Server>::process_one(self, hdr, body, output);
                         }
                     )*
 
@@ -704,9 +706,9 @@ interface! {
 compose_interfaces! {
      mod: composite,
      interfaces: [
-         basic,
-         two,
-         ops,
+         crate::basic,
+         crate::two,
+         crate::ops,
      ]
 }
 
