@@ -87,12 +87,12 @@ dependencies = [
 [[package]]
 name = "postcard-core"
 version = "0.1.0"
-source = "git+https://github.com/jamesmunns/postcard?rev=63217e3b578c5e43f07d1e66565525b087c8dac2#63217e3b578c5e43f07d1e66565525b087c8dac2"
+source = "git+https://github.com/jamesmunns/postcard?rev=8268690f0e237efb7a9c921f405ffa20c7534727#8268690f0e237efb7a9c921f405ffa20c7534727"
 
 [[package]]
 name = "postcard-derive-ng"
 version = "0.3.1"
-source = "git+https://github.com/jamesmunns/postcard?rev=63217e3b578c5e43f07d1e66565525b087c8dac2#63217e3b578c5e43f07d1e66565525b087c8dac2"
+source = "git+https://github.com/jamesmunns/postcard?rev=8268690f0e237efb7a9c921f405ffa20c7534727#8268690f0e237efb7a9c921f405ffa20c7534727"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -102,7 +102,7 @@ dependencies = [
 [[package]]
 name = "postcard-schema-ng"
 version = "0.3.2"
-source = "git+https://github.com/jamesmunns/postcard?rev=63217e3b578c5e43f07d1e66565525b087c8dac2#63217e3b578c5e43f07d1e66565525b087c8dac2"
+source = "git+https://github.com/jamesmunns/postcard?rev=8268690f0e237efb7a9c921f405ffa20c7534727#8268690f0e237efb7a9c921f405ffa20c7534727"
 dependencies = [
  "postcard-core",
  "postcard-derive-ng",

@@ -7,7 +7,7 @@ use postcard::{
     de_flavors::Slice as DeSlice,
     ser_flavors::{Flavor, Slice as SerSlice},
 };
-use postcard_schema_ng::{Schema, key::Key};
+use postcard_schema_ng::{Schema, key::Key, schema::DataModelType};
 use serde::{Deserialize, Serialize};
 
 /////////////////////////////////////////////////////////
@@ -127,6 +127,9 @@ macro_rules! interface {
                         $resp_ty::SCHEMA,
                     )*
                 ];
+
+                pub const MAX_REQ_SIZE: Option<usize> = $crate::max_buf_required(ALL_REQ_SCHEMAS);
+                pub const MAX_RESP_SIZE: Option<usize> = $crate::max_buf_required(ALL_RESP_SCHEMAS);
             }
 
             /// Calculated keys for all methods in this interface
@@ -277,6 +280,9 @@ macro_rules! compose_interfaces {
                         $($segment)::+::schemas::ALL_RESP_SCHEMAS,
                     )*
                 );
+
+                pub const MAX_REQ_SIZE: Option<usize> = $crate::max_buf_required(ALL_REQ_SCHEMAS);
+                pub const MAX_RESP_SIZE: Option<usize> = $crate::max_buf_required(ALL_RESP_SCHEMAS);
             }
 
             pub mod keys {
@@ -325,13 +331,51 @@ macro_rules! compose_interfaces {
     };
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Copy)]
+#[macro_export]
+macro_rules! autobuffer {
+    ($name:ident, $($segment:ident)::+) => {
+
+
+        pub struct $name {
+            pub inc: [u8; Self::_REQ_SIZE],
+            pub out: [u8; Self::_RESP_SIZE],
+        }
+
+        impl $name {
+            const _REQ_SIZE: usize = $($segment)::+::schemas::MAX_REQ_SIZE
+                .expect("Unable to automatically size buffer. \
+                    One or more request types don't have a max size.");
+            const _RESP_SIZE: usize = $($segment)::+::schemas::MAX_RESP_SIZE
+                .expect("Unable to automatically size buffer. \
+                    One or more response types don't have a max size.");
+
+            pub const fn new() -> Self {
+                Self {
+                    inc: [0u8; Self::_REQ_SIZE],
+                    out: [0u8; Self::_RESP_SIZE],
+                }
+            }
+        }
+
+        impl $crate::Storage for $name {
+            fn buffers(&mut self) -> (&mut [u8], &mut [u8]) {
+                let Self { inc, out } = self;
+                (inc, out)
+            }
+        }
+    };
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Copy, Schema)]
 pub enum Method {
     Request,
     Response,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+// TODO: We might want to manually impl Schema/Serialize/Deserialize for Header,
+// otherwise adding new methods will be a breaking schema change. We could also
+// implement method as a `u8` and/or u8 wrapper type. Fix this before releasing
+#[derive(Serialize, Deserialize, Debug, Clone, Schema)]
 pub struct Header {
     pub method: Method,
     pub version: u8,
@@ -534,111 +578,22 @@ const fn count_nested<T>(ts: &[&[T]]) -> usize {
     ct
 }
 
-/////////////////////////////////////////////////////////
-// NOTES AND DEAD CODES
-/////////////////////////////////////////////////////////
-
-/* // compose_interfaces! expands to:
- * mod {
- *      trait Client: basic::Client + two::Client {}
- *      impl<B: Backend> Client for B
- *      where
- *          B: basic::Client,
- *          B: two::Client,
- *      {}
- *
- *      trait Server: basic::Server + two::Server {}
- *      impl<T> Server for T
- *      where
- *          T: basic::Server,
- *          T: two::Server,
- *      {
- *          fn process_one<S: Server>(
- *               server: &mut S,
- *               hdr: Header,
- *               body: &[u8],
- *               output: &mut [u8],
- *          ) -> usize {
- *              const MAP: &[(&[EndpointInfo], fn(...) -> usize)] = &[
- *                  (<T as basic::Server>::SCHEMAS, <T as basic::Server>::process_one::<S>),
- *                  (<T as two::Server>::SCHEMAS, <T as two::Server>::process_one::<S>),
- *              ];
- *              for (s, f) in MAP.iter() {
- *                  if s.contains(hdr.key) {
- *                      return f(server, hdr, body, output);
- *                  }
- *              }
- *              // whatever serialize an err here
- *      }
- * }
- *
- * trait Backend {
- *      fn send_reply<Request, Response>(
- *          &self,
- *          req: &Request,
- *      ) -> Result<Response, Error>
- *      where
- *          Request: Serialize + Schema,
- *          Response: Deserialize + Schema,
- *      {
- *          let buf = serialize_with_header(req)?;
- *          let (header, body) = self.send_reply_raw(&buf);
- *          check(&header)?;
- *          deser(body)
- *      }
- *      fn send_reply_raw<'a>(
- *          &self,
- *          req: &[u8],
- *      ) -> Result<(Header, &'a mut [u8]), Error>;
- * }
- *
- * // client interface looks like:
- * trait TwoServerClient {
- *      fn one_more_thing(&self, req: &u32) -> Result<bool, Error>;
- * }
- *
- * // This is extension trait shenanigans, not sure if I can do better.
- * impl<B: Backend> TwoServerClient for B {
- *      fn one_more_thing(&self, req: &u32) -> Result<bool, Error> {
- *          self.send_reply::<u32, bool>(req)
- *      }
- * }
- */
-
-// macro_rules! endpoints {
-//     ($(
-//         $(#[cfg($meta:meta)])?
-//         $name: ident:
-//         $req:ty
-//         =>
-//         $resp:ty$(,)?
-//     )*) => {{
-//         const LIST: &[EndpointInfo] = &[$(
-//             $(#[cfg($meta)])?
-//             const {
-//                 struct Boop {}
-//                 impl Endpoint for Boop {
-//                     const NAME: &'static str = stringify!($name);
-//                     type Request = $req;
-//                     type Response = $resp;
-//                 }
-//                 EndpointInfo::info::<Boop>()
-//             },
-//         )*];
-//         LIST
-//     }};
-// }
-
-// const ENDPOINTS: &[EndpointInfo] = endpoints!(
-//     #[cfg(not(feature = "std"))] lol: u32 => u32,
-//     lmao: u32 => u32,
-//     // "lol": u32 => u32,
-// );
-
-// pub struct EndpointInfo {
-//     pub name: &'static str,
-//     pub key: Key,
-// }
+pub const fn max_buf_required(schemas: &[&DataModelType]) -> Option<usize> {
+    use postcard_schema_ng::Schema;
+    let header_size = Header::SCHEMA.max_size().unwrap();
+    let mut max = 0;
+    let mut idx = 0;
+    while idx < schemas.len() {
+        let Some(m) = schemas[idx].max_size() else {
+            return None;
+        };
+        if m > max {
+            max = m;
+        }
+        idx += 1;
+    }
+    Some(max + header_size)
+}
 
 /////////////////////////////////////////////////////////
 // EXAMPLES
@@ -650,12 +605,6 @@ interface! {
      | ------            | -------       | --------      |
      | mult_three        | u32           | u32           |
 }
-
-#[derive(Schema, Deserialize, Serialize)]
-pub struct Str<'a>(&'a str);
-
-#[derive(Schema, Deserialize, Serialize)]
-pub struct Str2<'a, 'b>(&'a str, &'b str);
 
 #[derive(Schema, Deserialize, Serialize)]
 pub struct Fancy {
@@ -671,29 +620,34 @@ pub struct Fancy {
 }
 
 #[cfg(not(feature = "std"))]
+type EightString<'a> = postcard_schema_ng::bounded::BoundedStr<'a, 8>;
+
+#[cfg(feature = "std")]
+type EightString = postcard_schema_ng::bounded::BoundedString<8>;
+
+#[cfg(not(feature = "std"))]
 interface! {
      mod: basic,
-     | method     | request | response     |
-     | ------     | ------- | --------     |
-     | mult_two   | u32     | u32          |
-     | to_stringa | u32     | Str<'b>      |
-     | to_stringb | Str<'a> | u32          |
-     | billy      | Str<'a> | Str<'b>      |
-     | to_stringd | Str<'a> | Str2<'b, 'c> |
+     | method     | request             | response          |
+     | ------     | -------             | --------          |
+     | mult_two   | u32                 | u32               |
+     | to_stringa | u32                 | EightString<'b>    |
+     | to_stringb | EightString<'a, 8>  | u32               |
+     | billy      | EightString<'a, 8>  | EightString<'b>    |
 }
 
 #[cfg(feature = "std")]
 interface! {
      mod: basic,
-     | method     | request | response     |
-     | ------     | ------- | --------     |
-     | mult_two   | u32     | u32          |
-     | to_stringa | u32     | String       |
-     | to_stringb | String  | u32          |
-     | billy      | Str<'a> | Str<'b>      |
-     | to_stringd | String  | String       |
-     | is_good    | Fancy   | bool         |
-     | fancy_boi  | Fancy   | u32          |
+     | method     | request     | response      |
+     | ------     | -------     | --------      |
+     | mult_two   | u32         | u32           |
+     | to_stringa | u32         | EightString   |
+     | to_stringb | EightString | u32           |
+     | billy      | EightString | EightString   |
+     | to_stringd | EightString | EightString   |
+     | is_good    | Fancy       | bool          |
+     | fancy_boi  | Fancy       | u32           |
 }
 
 interface! {
@@ -712,6 +666,14 @@ compose_interfaces! {
      ]
 }
 
+// interface without auto-sizable buffers
+interface! {
+     mod: unsizable,
+     | method            | request       | response      |
+     | ------            | -------       | --------      |
+     | s2s               | String        | String        |
+}
+
 pub struct ServerImpl;
 
 impl basic::Server for ServerImpl {
@@ -719,23 +681,23 @@ impl basic::Server for ServerImpl {
         req.req * 2
     }
 
-    fn to_stringa(&mut self, req: crate::Request<u32>) -> String {
-        req.req.to_string()
+    fn to_stringa(&mut self, req: crate::Request<u32>) -> EightString {
+        req.req.to_string().try_into().unwrap()
     }
 
-    fn to_stringb(&mut self, req: crate::Request<String>) -> u32 {
+    fn to_stringb(&mut self, req: crate::Request<EightString>) -> u32 {
         req.req.len() as u32
     }
 
-    fn to_stringd(&mut self, req: crate::Request<String>) -> String {
+    fn to_stringd(&mut self, req: crate::Request<EightString>) -> EightString {
         req.req
     }
 
-    fn billy<'a, 'b>(&mut self, req: crate::Request<Str<'a>>) -> Str<'b> {
-        if req.req.0.len() > 5 {
-            Str(":(")
+    fn billy<'a, 'b>(&mut self, req: crate::Request<EightString>) -> EightString {
+        if req.req.len() > 5 {
+            EightString::try_from(":(").unwrap()
         } else {
-            Str(":)")
+            EightString::try_from(":)").unwrap()
         }
     }
 
@@ -766,20 +728,14 @@ impl two::Server for ServerImpl {
 
 #[cfg(test)]
 mod test {
+    use std::ops::Deref;
+
     use crate::basic::Client;
 
     use super::*;
 
-    struct Buffers {
-        inc: [u8; 256],
-        out: [u8; 256],
-    }
-    impl Storage for Buffers {
-        fn buffers(&mut self) -> (&mut [u8], &mut [u8]) {
-            let Self { inc, out } = self;
-            (inc, out)
-        }
-    }
+    // Automatically sized buffers for the composite interface
+    autobuffer!(CompBuffers, crate::composite);
 
     struct ServerInterface {
         #[allow(clippy::type_complexity)]
@@ -799,7 +755,7 @@ mod test {
     }
 
     struct TestClient {
-        buf: Buffers,
+        buf: CompBuffers,
         intfc: ServerInterface,
         seq: u16,
     }
@@ -813,10 +769,7 @@ mod test {
             hdlr: Box<dyn for<'a> FnMut(&Header, &[u8], &'a mut [u8]) -> Result<&'a [u8], Error>>,
         ) -> Self {
             TestClient {
-                buf: Buffers {
-                    inc: [0u8; 256],
-                    out: [0u8; 256],
-                },
+                buf: CompBuffers::new(),
                 intfc: ServerInterface { inner: hdlr },
                 seq: 0,
             }
@@ -824,7 +777,7 @@ mod test {
     }
 
     impl Backend for TestClient {
-        type Storage = Buffers;
+        type Storage = CompBuffers;
         type Interface = ServerInterface;
 
         fn next_sequence_number(&mut self) -> u16 {
@@ -873,7 +826,7 @@ mod test {
         let res = cli.to_stringa(&123).unwrap();
         assert_eq!(res.hdr.method, Method::Response);
         assert_eq!(res.hdr.seqno, 1);
-        assert_eq!(res.resp, "123");
+        assert_eq!(res.resp.deref(), "123");
     }
 
     #[test]
@@ -884,10 +837,13 @@ mod test {
         }));
 
         let res = cli
-            .send_reply::<Str, Str>(endpoint_key2::<Str, Str>("billy"), &Str("boop"))
+            .send_reply::<EightString, EightString>(
+                endpoint_key2::<EightString, EightString>("billy"),
+                &EightString::try_from("boop").unwrap(),
+            )
             .unwrap();
 
-        assert_eq!(res.resp.0, ":)");
+        assert_eq!(res.resp.deref(), ":)");
     }
 
     #[test]
@@ -903,6 +859,14 @@ mod test {
         for k in composite::keys::ALL_KEYS {
             println!("{k:?}");
         }
+
+        const H: usize = Header::SCHEMA.max_size().unwrap();
+        const A: usize = max_buf_required(composite::schemas::ALL_REQ_SCHEMAS).unwrap();
+        const B: usize = max_buf_required(composite::schemas::ALL_RESP_SCHEMAS).unwrap();
+
+        assert_eq!(H, 13);
+        assert_eq!(A, 59);
+        assert_eq!(B, 22);
         // panic to print...
         // panic!();
     }
