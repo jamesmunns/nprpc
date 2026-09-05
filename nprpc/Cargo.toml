@@ -4,9 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-postcard-schema = { version = "0.2.5", features = ["derive"] }
+postcard = "1.1.3"
+# branch: james/max-size-attempt-2
+postcard-schema-ng = { git = "https://github.com/jamesmunns/postcard", rev = "63217e3b578c5e43f07d1e66565525b087c8dac2", features = ["derive"] }
 serde = { version = "1.0.229", default-features = false, features = ["derive"] }
 
 [features]
-std = ["postcard-schema/use-std"]
+std = ["postcard-schema-ng/use-std"]
 default = ["std"]
