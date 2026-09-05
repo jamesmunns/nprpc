@@ -2,6 +2,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use postcard::{
+    Deserializer, Serializer,
+    de_flavors::Slice as DeSlice,
+    ser_flavors::{Flavor, Slice as SerSlice},
+};
 use postcard_schema_ng::{Schema, key::Key};
 use serde::{Deserialize, Serialize};
 
@@ -161,7 +166,7 @@ macro_rules! interface {
                     hdr: $crate::Header,
                     body: &[u8],
                     output: &'buf mut [u8],
-                ) -> Result<&'buf mut [u8], $crate::Error> {
+                ) -> Result<&'buf [u8], $crate::Error> {
                     // This block ensures that all request types implement the Schema trait and
                     // the Deserialize trait, giving a more predictable error if not.
                     $(
@@ -249,7 +254,7 @@ macro_rules! compose_interfaces {
                     hdr: $crate::Header,
                     body: &[u8],
                     output: &'buf mut [u8],
-                ) -> Result<&'buf mut [u8], $crate::Error>;
+                ) -> Result<&'buf [u8], $crate::Error>;
             }
 
             impl<T> Server for T
@@ -261,7 +266,7 @@ macro_rules! compose_interfaces {
                     hdr: $crate::Header,
                     body: &[u8],
                     output: &'buf mut [u8],
-                ) -> Result<&'buf mut [u8], $crate::Error> {
+                ) -> Result<&'buf [u8], $crate::Error> {
                     // Check all the merged keys to make sure that none of the composed
                     // endpoints have a collision
                     const _: () = $crate::assert_unique(keys::ALL_KEYS);
@@ -271,6 +276,8 @@ macro_rules! compose_interfaces {
                             return <Self as super::$intfc::Server>::process_one(self, hdr, body, output);
                         }
                     )*
+
+                    println!("{} UNK", stringify!($mod_name));
                     Err($crate::Error::Unknown)
                 }
             }
@@ -278,11 +285,13 @@ macro_rules! compose_interfaces {
     };
 }
 
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Copy)]
 pub enum Method {
     Request,
     Response,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Header {
     pub method: Method,
     pub version: u8,
@@ -293,6 +302,10 @@ pub struct Request<T> {
     pub hdr: Header,
     pub req: T,
 }
+pub struct Response<U> {
+    pub hdr: Header,
+    pub resp: U,
+}
 
 #[derive(Debug, PartialEq)]
 pub enum Error {
@@ -300,15 +313,19 @@ pub enum Error {
     Unknown,
     PostcardDeser(postcard::Error),
     PostcardSer(postcard::Error),
+    BadSeqno,
+    KeyMismatch,
+    BadMethod,
+    VersionMismatch,
 }
 
 pub fn process_endpoint<'out, 'de, S: ?Sized, Q, R>(
     server: &mut S,
-    hdr: Header,
+    mut hdr: Header,
     body: &'de [u8],
     out: &'out mut [u8],
     apply: fn(&mut S, Request<Q>) -> R,
-) -> Result<&'out mut [u8], Error>
+) -> Result<&'out [u8], Error>
 where
     Q: Deserialize<'de>,
     R: Serialize,
@@ -316,11 +333,92 @@ where
     // Deserialize
     let body: Q = postcard::from_bytes(body).map_err(Error::PostcardDeser)?;
     // Process request
-    let req = Request { hdr, req: body };
+    let req = Request {
+        hdr: hdr.clone(),
+        req: body,
+    };
     let resp = apply(server, req);
-    // Serialize response (TODO, we also need to do the header)
-    let used = postcard::to_slice(&resp, out).map_err(Error::PostcardSer)?;
+    // Serialize response
+    let mut out = Serializer {
+        output: SerSlice::new(out),
+    };
+    hdr.method = Method::Response;
+    hdr.serialize(&mut out).map_err(Error::PostcardSer)?;
+    resp.serialize(&mut out).map_err(Error::PostcardSer)?;
+    let used = out.output.finalize().map_err(Error::PostcardSer)?;
     Ok(used)
+}
+
+pub trait Backend {
+    type Storage: Storage;
+    type Interface: Interface;
+    fn next_sequence_number(&mut self) -> u16;
+    fn parts(&mut self) -> (&mut Self::Storage, &mut Self::Interface);
+    fn send_reply<'de, Q, R>(&'de mut self, key: Key, req: &Q) -> Result<Response<R>, Error>
+    where
+        Q: Serialize,
+        R: Deserialize<'de> + 'de,
+    {
+        let seqno = self.next_sequence_number();
+        let (sto, intfc) = self.parts();
+        let (out, inc) = sto.buffers();
+
+        // SERIALIZE OUTGOING...
+        let hdrout = Header {
+            method: Method::Request,
+            version: 0,
+            seqno,
+            key,
+        };
+        let mut out = Serializer {
+            output: SerSlice::new(out),
+        };
+        hdrout.serialize(&mut out).map_err(Error::PostcardSer)?;
+        req.serialize(&mut out).map_err(Error::PostcardSer)?;
+
+        // Exchange...
+        // TODO: CRC? Wrapping flavor?
+        let used = out.output.finalize().map_err(Error::PostcardSer)?;
+
+        // DESERIALIZE INCOMING
+        let recvd = intfc.send_reply_raw(used, inc)?;
+        let mut inc = Deserializer::from_flavor(DeSlice::new(recvd));
+        let hdrin = Header::deserialize(&mut inc).map_err(Error::PostcardDeser)?;
+
+        if hdrin.seqno != hdrout.seqno {
+            return Err(Error::BadSeqno);
+        }
+        if hdrin.method != Method::Response {
+            return Err(Error::BadMethod);
+        }
+        if hdrin.version != hdrout.version {
+            return Err(Error::VersionMismatch);
+        }
+        if hdrin.key != hdrout.key {
+            return Err(Error::KeyMismatch);
+        }
+
+        // Happy with the header, get the body
+        let body = R::deserialize(&mut inc).map_err(Error::PostcardDeser)?;
+
+        Ok(Response {
+            hdr: hdrin,
+            resp: body,
+        })
+    }
+}
+
+pub trait Storage {
+    // TODO: do we want this to be postcard-core flavors?
+    fn buffers(&mut self) -> (&mut [u8], &mut [u8]);
+}
+
+pub trait Interface {
+    fn send_reply_raw<'a>(
+        &mut self,
+        outgoing: &[u8],
+        incoming: &'a mut [u8],
+    ) -> Result<&'a [u8], Error>;
 }
 
 /////////////////////////////////////////////////////////
@@ -555,6 +653,7 @@ interface! {
      | billy      | Str<'a> | Str<'b>      |
      | to_stringd | String  | String       |
      | is_good    | Fancy   | bool         |
+     | fancy_boi  | Fancy   | u32          |
 }
 
 interface! {
@@ -607,6 +706,10 @@ impl basic::Server for ServerImpl {
         }
         good
     }
+
+    fn fancy_boi(&mut self, req: crate::Request<Fancy>) -> u32 {
+        req.req.c * 5
+    }
 }
 
 impl ops::Server for ServerImpl {
@@ -623,51 +726,101 @@ impl two::Server for ServerImpl {
 
 #[cfg(test)]
 mod test {
+
+    struct Buffers {
+        inc: [u8; 256],
+        out: [u8; 256],
+    }
+    impl Storage for Buffers {
+        fn buffers(&mut self) -> (&mut [u8], &mut [u8]) {
+            let Self { inc, out } = self;
+            (inc, out)
+        }
+    }
+
+    struct ServerInterface {
+        #[allow(clippy::type_complexity)]
+        inner: Box<dyn for<'a> FnMut(&Header, &[u8], &'a mut [u8]) -> Result<&'a [u8], Error>>,
+    }
+    impl Interface for ServerInterface {
+        fn send_reply_raw<'a>(
+            &mut self,
+            outgoing: &[u8],
+            incoming: &'a mut [u8],
+        ) -> Result<&'a [u8], Error> {
+            println!("=> {:?}", outgoing);
+            let (header, remain) = postcard::take_from_bytes::<Header>(outgoing).unwrap();
+            println!("-> {:?}", header.key);
+            (self.inner)(&header, remain, incoming)
+        }
+    }
+
+    struct TestClient {
+        buf: Buffers,
+        intfc: ServerInterface,
+        seq: u16,
+    }
+    impl Backend for TestClient {
+        type Storage = Buffers;
+        type Interface = ServerInterface;
+
+        fn next_sequence_number(&mut self) -> u16 {
+            let now = self.seq;
+            self.seq = self.seq.wrapping_add(1);
+            now
+        }
+
+        fn parts(&mut self) -> (&mut Self::Storage, &mut Self::Interface) {
+            let Self { buf, intfc, seq: _ } = self;
+            (buf, intfc)
+        }
+    }
+
     use super::*;
     #[test]
     pub fn exercise() {
         let mut x = ServerImpl;
-        let mut output = [0u8; 16];
-        let mut input = [0u8; 16];
-
-        let iused = postcard::to_slice(&200u32, &mut input).unwrap();
-        let resp = <ServerImpl as composite::Server>::process_one(
-            &mut x,
-            Header {
-                seqno: 123,
-                version: 0,
-                method: Method::Request,
-                key: endpoint_key2::<u32, u32>("mult_two"),
+        let mut cli = TestClient {
+            buf: Buffers {
+                inc: [0u8; 256],
+                out: [0u8; 256],
             },
-            iused,
-            &mut output,
-        )
-        .unwrap();
-        let actually: u32 = postcard::from_bytes(resp).unwrap();
-        assert_eq!(actually, 400u32);
+            intfc: ServerInterface {
+                inner: Box::new(move |hdr, inc, out| {
+                    <ServerImpl as composite::Server>::process_one(&mut x, hdr.clone(), inc, out)
+                }),
+            },
+            seq: 0,
+        };
+
+        let res = cli
+            .send_reply::<u32, u32>(endpoint_key2::<u32, u32>("mult_two"), &200)
+            .unwrap();
+
+        assert_eq!(res.resp, 400u32);
     }
 
     #[test]
     pub fn exercise_borrowed() {
         let mut x = ServerImpl;
-        let mut output = [0u8; 16];
-        let mut input = [0u8; 16];
-
-        let iused = postcard::to_slice("boop", &mut input).unwrap();
-        let resp = <ServerImpl as composite::Server>::process_one(
-            &mut x,
-            Header {
-                seqno: 124,
-                version: 0,
-                method: Method::Request,
-                key: endpoint_key2::<Str, Str>("billy"),
+        let mut cli = TestClient {
+            buf: Buffers {
+                inc: [0u8; 256],
+                out: [0u8; 256],
             },
-            iused,
-            &mut output,
-        )
-        .unwrap();
-        let actually: Str<'_> = postcard::from_bytes(resp).unwrap();
-        assert_eq!(actually.0, ":)");
+            intfc: ServerInterface {
+                inner: Box::new(move |hdr, inc, out| {
+                    <ServerImpl as composite::Server>::process_one(&mut x, hdr.clone(), inc, out)
+                }),
+            },
+            seq: 0,
+        };
+
+        let res = cli
+            .send_reply::<Str, Str>(endpoint_key2::<Str, Str>("billy"), &Str("boop"))
+            .unwrap();
+
+        assert_eq!(res.resp.0, ":)");
     }
 
     #[test]
