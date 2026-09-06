@@ -1,5 +1,11 @@
 [workspace]
 resolver = "3"
-members = [
+members = ["demo/demo-api",
   "nprpc",
+  "demo/*",
 ]
+
+[workspace.dependencies]
+postcard = "1.1.3"
+# branch: james/max-size-attempt-2
+postcard-schema-ng = { git = "https://github.com/jamesmunns/postcard", rev = "8268690f0e237efb7a9c921f405ffa20c7534727", features = ["derive"] }

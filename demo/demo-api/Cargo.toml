@@ -1,13 +1,14 @@
 [package]
-name = "nprpc"
+name = "demo-api"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-postcard.workspace = true
-postcard-schema-ng.workspace = true
+nprpc.path = "../../nprpc"
 serde = { version = "1.0.229", default-features = false, features = ["derive"] }
+postcard-schema-ng.workspace = true
+postcard.workspace = true
 
 [features]
-std = ["postcard-schema-ng/use-std"]
 default = ["std"]
+std = ["postcard-schema-ng/use-std"]
