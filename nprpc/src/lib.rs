@@ -10,6 +10,13 @@ use postcard::{
 use postcard_schema_ng::{Schema, key::Key, schema::DataModelType};
 use serde::{Deserialize, Serialize};
 
+#[doc(hidden)]
+pub mod __private {
+    pub use postcard_schema_ng::Schema;
+    pub use postcard_schema_ng::key::Key;
+    pub use postcard_schema_ng::schema::DataModelType;
+}
+
 /////////////////////////////////////////////////////////
 // EXAMPLES
 /////////////////////////////////////////////////////////
@@ -32,7 +39,7 @@ use serde::{Deserialize, Serialize};
 #[macro_export]
 macro_rules! merge_keylists {
     ($($($segment:ident)::+$(,)?)*) => {{
-        use postcard_schema_ng::key::Key;
+        use $crate::__private::Key;
         const TOTAL_LEN: usize = $crate::count_nested::<Key>(
             &[$(
                 $($segment)::+,
@@ -114,7 +121,8 @@ macro_rules! interface {
             pub mod schemas {
                 #[allow(unused_imports)]
                 use super::*;
-                use postcard_schema_ng::schema::DataModelType;
+                use $crate::__private::DataModelType;
+                use $crate::__private::Schema;
 
                 // All schemas, un-deduplicated
                 pub const ALL_REQ_SCHEMAS: &[&DataModelType] = &[
@@ -136,7 +144,7 @@ macro_rules! interface {
             pub mod keys {
                 #[allow(unused_imports)]
                 use super::*;
-                use postcard_schema_ng::key::Key;
+                use $crate::__private::Key;
 
                 $(
                     #[allow(non_upper_case_globals)]
@@ -200,7 +208,7 @@ macro_rules! interface {
                         )*
 
                         // None of the keys matched, return an error.
-                        _ => Err(Error::Unknown),
+                        _ => Err($crate::Error::Unknown),
                     }
                 }
             }
@@ -269,7 +277,7 @@ macro_rules! compose_interfaces {
     ) => {
         pub mod $mod_name {
             pub mod schemas {
-                use postcard_schema_ng::schema::DataModelType;
+                use $crate::__private::DataModelType;
                 pub const ALL_REQ_SCHEMAS: &[&DataModelType] = $crate::merge_schemalists!(
                     $(
                         $($segment)::+::schemas::ALL_REQ_SCHEMAS,
@@ -286,7 +294,7 @@ macro_rules! compose_interfaces {
             }
 
             pub mod keys {
-                use postcard_schema_ng::key::Key;
+                use $crate::__private::Key;
                 pub const ALL_KEYS: &[Key] = $crate::merge_keylists!(
                     $(
                         $($segment)::+::keys::ALL_KEYS,
@@ -568,7 +576,7 @@ pub const fn endpoint_key2<Q: Schema, R: Schema>(name: &str) -> Key {
     Key::from_bytes(out)
 }
 
-const fn count_nested<T>(ts: &[&[T]]) -> usize {
+pub const fn count_nested<T>(ts: &[&[T]]) -> usize {
     let mut idx = 0;
     let mut ct = 0;
     while idx < ts.len() {
@@ -632,8 +640,8 @@ interface! {
      | ------     | -------             | --------          |
      | mult_two   | u32                 | u32               |
      | to_stringa | u32                 | EightString<'b>    |
-     | to_stringb | EightString<'a, 8>  | u32               |
-     | billy      | EightString<'a, 8>  | EightString<'b>    |
+     | to_stringb | EightString<'a>     | u32               |
+     | billy      | EightString<'a>     | EightString<'b>    |
 }
 
 #[cfg(feature = "std")]
