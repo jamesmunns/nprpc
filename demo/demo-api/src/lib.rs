@@ -20,10 +20,10 @@ pub struct Fancy {
 }
 
 #[cfg(not(feature = "std"))]
-type EightString<'a> = postcard_schema_ng::bounded::BoundedStr<'a, 8>;
+type EightString<'a> = postcard_schema_ng::max_len::MaxLenStr<'a, 8>;
 
 #[cfg(feature = "std")]
-type EightString = postcard_schema_ng::bounded::BoundedString<8>;
+type EightString = postcard_schema_ng::max_len::MaxLenString<8>;
 
 /////////////////////////////////////////////////////
 // Interface definitions
@@ -143,9 +143,8 @@ impl two::Server for ServerImpl {
 mod test {
     use std::ops::Deref;
 
-    use nprpc::{
-        Backend, Error, Header, Interface, Method, autobuffer, endpoint_key2, max_buf_required,
-    };
+    use nprpc::{Backend, Error, Header, Interface, Method, autobuffer, max_buf_required};
+    use postcard_schema_ng::key::Key;
 
     use crate::basic::Client;
 
@@ -217,7 +216,7 @@ mod test {
         }));
 
         let res = cli
-            .send_reply::<u32, u32>(endpoint_key2::<u32, u32>("mult_two"), &200)
+            .send_reply::<u32, u32>(Key::for_2ty_path::<u32, u32>("mult_two"), &200)
             .unwrap();
 
         assert_eq!(res.resp, 400u32);
@@ -255,7 +254,7 @@ mod test {
 
         let res = cli
             .send_reply::<EightString, EightString>(
-                endpoint_key2::<EightString, EightString>("billy"),
+                Key::for_2ty_path::<EightString, EightString>("billy"),
                 &EightString::try_from("boop").unwrap(),
             )
             .unwrap();

@@ -149,7 +149,7 @@ macro_rules! interface {
 
                 $(
                     #[allow(non_upper_case_globals)]
-                    pub const $mthd: Key = $crate::endpoint_key2::<$req_ty, $resp_ty>(
+                    pub const $mthd: Key = $crate::__private::Key::for_2ty_path::<$req_ty, $resp_ty>(
                         stringify!($mthd)
                     );
                 )*
@@ -551,35 +551,6 @@ pub const fn assert_unique(keys: &[Key]) {
         }
         i += 1;
     }
-}
-
-pub const fn half_fold(i: [u8; 8]) -> [u8; 4] {
-    let [a, b, c, d, e, f, g, h] = i;
-    [a ^ e, b ^ f, c ^ g, d ^ h]
-}
-
-// TODO: This kind of sucks, we probably want something like `Key::for_path<A, B>(path)`
-// that does full hashing instead of this mixing stuff. DO NOT just straight xor
-// `req_half ^ rsp_half`, if both types are the same then they just cancel out!
-pub const fn endpoint_key2<Q: Schema, R: Schema>(name: &str) -> Key {
-    let req_half = Key::for_path::<Q>(name);
-    let rsp_half = Key::for_path::<R>(name);
-    let req_bytes = req_half.to_bytes();
-    let half_req = half_fold(req_bytes);
-    let rsp_bytes = rsp_half.to_bytes();
-    let half_rsp = half_fold(rsp_bytes);
-
-    let mut out = [0u8; 8];
-    let mut idx = 0;
-    while idx < 4 {
-        out[idx] = half_req[idx];
-        idx += 1;
-    }
-    while idx < 8 {
-        out[idx] = half_rsp[idx - 4];
-        idx += 1;
-    }
-    Key::from_bytes(out)
 }
 
 pub const fn count_nested<T>(ts: &[&[T]]) -> usize {
