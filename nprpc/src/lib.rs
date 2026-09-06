@@ -327,12 +327,17 @@ macro_rules! compose_interfaces {
                     const _: () = $crate::assert_unique(keys::ALL_KEYS);
 
                     $(
+                        // We know that all keys are unique, so instead of pre-checking whether a
+                        // sub-interface can handle a request, we just give it to each sub-interface
+                        // one at a time until one responds with a non-Unknown result, or we have
+                        // exhausted all outcomes.
+                        //
+                        // TODO: j/k, that causes borrow errors?
                         if $($segment)::+::keys::ALL_KEYS.contains(&hdr.key) {
                             return <Self as $($segment)::+::Server>::process_one(self, hdr, body, output);
                         }
                     )*
 
-                    println!("{} UNK", stringify!($mod_name));
                     Err($crate::Error::Unknown)
                 }
             }

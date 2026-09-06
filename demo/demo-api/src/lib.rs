@@ -2,12 +2,9 @@ use nprpc::{compose_interfaces, interface};
 use postcard_schema_ng::Schema;
 use serde::{Deserialize, Serialize};
 
-interface! {
-     mod: ops,
-     | method            | request       | response      |
-     | ------            | -------       | --------      |
-     | mult_three        | u32           | u32           |
-}
+/////////////////////////////////////////////////////
+// API types
+/////////////////////////////////////////////////////
 
 #[derive(Schema, Deserialize, Serialize)]
 pub struct Fancy {
@@ -27,6 +24,17 @@ type EightString<'a> = postcard_schema_ng::bounded::BoundedStr<'a, 8>;
 
 #[cfg(feature = "std")]
 type EightString = postcard_schema_ng::bounded::BoundedString<8>;
+
+/////////////////////////////////////////////////////
+// Interface definitions
+/////////////////////////////////////////////////////
+
+interface! {
+     mod: ops,
+     | method            | request       | response      |
+     | ------            | -------       | --------      |
+     | mult_three        | u32           | u32           |
+}
 
 #[cfg(not(feature = "std"))]
 interface! {
@@ -80,6 +88,7 @@ interface! {
 pub struct ServerImpl;
 use nprpc::Request;
 
+#[cfg(feature = "std")]
 impl basic::Server for ServerImpl {
     fn mult_two(&mut self, req: Request<u32>) -> u32 {
         req.req * 2
@@ -97,7 +106,7 @@ impl basic::Server for ServerImpl {
         req.req
     }
 
-    fn billy<'a, 'b>(&mut self, req: Request<EightString>) -> EightString {
+    fn billy(&mut self, req: Request<EightString>) -> EightString {
         if req.req.len() > 5 {
             EightString::try_from(":(").unwrap()
         } else {
