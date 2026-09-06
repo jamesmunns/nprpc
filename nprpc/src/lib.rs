@@ -15,11 +15,65 @@ pub mod __private {
     pub use postcard_schema_ng::Schema;
     pub use postcard_schema_ng::key::Key;
     pub use postcard_schema_ng::schema::DataModelType;
+    pub use serde::{Deserialize, Serialize};
 }
 
 /////////////////////////////////////////////////////////
-// EXAMPLES
+// MACROS
 /////////////////////////////////////////////////////////
+
+pub trait Endpoint {
+    type Request<'inc>: Schema + Deserialize<'inc>;
+    type Response<'out>: Schema + Serialize;
+
+    const NAME: &'static str;
+
+    const KEY: Key =
+        Key::for_2ty_path::<Self::Request<'static>, Self::Response<'static>>(Self::NAME);
+
+    const INFO: EndpointInfo = EndpointInfo {
+        name: Self::NAME,
+        key: &Self::KEY,
+        req_schema: <Self::Request<'static> as Schema>::SCHEMA,
+        resp_schema: <Self::Response<'static> as Schema>::SCHEMA,
+    };
+
+    fn process<'inc, 'out, 'ser>(
+        mut hdr: Header,
+        body: &'inc [u8],
+        out: &'ser mut [u8],
+        func: impl FnOnce(Request<Self::Request<'inc>>) -> Self::Response<'out>,
+    ) -> Result<&'ser [u8], Error> {
+        // Deserialize
+        let body: Self::Request<'_> = postcard::from_bytes(body).map_err(Error::PostcardDeser)?;
+        // Process request
+        let req = Request {
+            hdr: hdr.clone(),
+            req: body,
+        };
+        let resp = func(req);
+        // Serialize response
+        let mut out = Serializer {
+            output: SerSlice::new(out),
+        };
+        hdr.method = Method::Response;
+        hdr.serialize(&mut out).map_err(Error::PostcardSer)?;
+        resp.serialize(&mut out).map_err(Error::PostcardSer)?;
+        let used = out.output.finalize().map_err(Error::PostcardSer)?;
+        Ok(used)
+    }
+}
+
+// pub fn process_endpoint<'out, 'de, S: ?Sized, Q, R>(
+//     server: &mut S,
+//     mut hdr: Header,
+//     body: &'de [u8],
+//     out: &'out mut [u8],
+//     apply: fn(&mut S, Request<Q>) -> R,
+// ) -> Result<&'out [u8], Error>
+// where
+//     Q: Deserialize<'de>,
+//     R: Serialize,
 
 /// ```rust,ignore
 /// interface! {
@@ -42,22 +96,31 @@ macro_rules! interface {
             #[allow(unused_imports)]
             use super::*;
 
+            pub mod gats {
+                #[allow(unused_imports)]
+                use super::*;
+
+                $(
+                    #[allow(non_camel_case_types)]
+                    pub struct $mthd;
+
+                    impl $crate::Endpoint for $mthd {
+                        type Request<'inc> = $req_ty $(< $($req_lt),+ >)?;
+                        type Response<'out> = $resp_ty $(< $($resp_lt),+ >)?;
+                        const NAME: &'static str = concat!(stringify!($mod_name), "/", stringify!($mthd));
+                    }
+                )*
+            }
+
             /// Calculated keys for all methods in this interface
             pub mod keys {
                 #[allow(unused_imports)]
                 use super::*;
                 use $crate::__private::Key;
 
-                $(
-                    #[allow(non_upper_case_globals)]
-                    pub const $mthd: Key = $crate::__private::Key::for_2ty_path::<$req_ty, $resp_ty>(
-                        concat!(stringify!($mod_name), "/", stringify!($mthd))
-                    );
-                )*
-
                 pub const ALL_KEYS: &[Key] = &[
                     $(
-                        $mthd,
+                        <gats::$mthd as $crate::Endpoint>::KEY,
                     )*
                 ];
             }
@@ -65,16 +128,11 @@ macro_rules! interface {
             pub mod info {
                 #[allow(unused_imports)]
                 use super::*;
-                use $crate::{EndpointInfo, InterfaceInfo};
+                use $crate::{EndpointInfo, InterfaceInfo, Endpoint};
                 use $crate::__private::Schema;
                 pub const ALL_ENDPOINT_INFOS: &[EndpointInfo] = &[
                     $(
-                        EndpointInfo {
-                            name: concat!(stringify!($mod_name), "/", stringify!($mthd)),
-                            key: &super::keys::$mthd,
-                            req_schema: $req_ty::SCHEMA,
-                            resp_schema: $resp_ty::SCHEMA,
-                        },
+                        <super::gats::$mthd as Endpoint>::INFO,
                     )*
                 ];
 
@@ -124,11 +182,26 @@ macro_rules! interface {
                     // basis.
                     match hdr.key {
                         $(
-                            keys::$mthd => $crate::process_endpoint::<
-                                Self,
-                                $req_ty,
-                                $resp_ty,
-                            >(self, hdr, body, output, <Self as Server>::$mthd),
+                            // fn process<'inc, 'out, 'ser>(
+                            //     mut hdr: Header,
+                            //     body: &'inc [u8],
+                            //     out: &'ser mut [u8],
+                            //     func: impl FnOnce(Request<Self::Request<'inc>>) -> Self::Response<'out>,
+                            // ) -> Result<&'ser [u8], Error> {
+
+                            // <gats::$mthd as $crate::Endpoint>::KEY => $crate::process_endpoint::<
+                            //     Self,
+                            //     $req_ty,
+                            //     $resp_ty,
+                            // >(self, hdr, body, output, <Self as Server>::$mthd),
+                            <gats::$mthd as $crate::Endpoint>::KEY => {
+                                <gats::$mthd as $crate::Endpoint>::process(
+                                    hdr,
+                                    body,
+                                    output,
+                                    |req| <Self as Server>::$mthd(self, req)
+                                )
+                            }
                         )*
 
                         // None of the keys matched, return an error.
@@ -170,7 +243,7 @@ macro_rules! interface {
                         $($('me: $resp_lt,)+)?
                     {
                         self.send_reply::<$req_ty, $resp_ty>(
-                            keys::$mthd,
+                            <gats::$mthd as $crate::Endpoint>::KEY,
                             req,
                         )
                     }
