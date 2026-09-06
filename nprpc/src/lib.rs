@@ -21,83 +21,6 @@ pub mod __private {
 // EXAMPLES
 /////////////////////////////////////////////////////////
 
-// TODO: we could dedupe merge_keylists and merge_schemalists by making a macro
-// that looks like:
-//
-// ```rust
-// merge_lists! {
-//      Key,                        // Type
-//      Key::from_bytes([0u8; 8]),  // Initial const value expr
-//      [
-//          $(...)*                 // Array expansion goes here
-//      ]
-// }
-// ```
-
-/// Internal macro for merging generated keylists, used for
-/// `compose_interfaces!`
-#[macro_export]
-macro_rules! merge_keylists {
-    ($($($segment:ident)::+$(,)?)*) => {{
-        use $crate::__private::Key;
-        const TOTAL_LEN: usize = $crate::count_nested::<Key>(
-            &[$(
-                $($segment)::+,
-            )*]
-        );
-        const ALL_KEYS_MERGED: [Key; TOTAL_LEN] = const {
-            const ONE: Key = {
-                Key::from_bytes([0u8; 8])
-            };
-            let mut arr = [ONE; TOTAL_LEN];
-            let mut idx_arr = 0;
-            $(
-                let mut chidx = 0;
-                while chidx < $($segment)::+.len() {
-                    arr[idx_arr] = $($segment)::+[chidx];
-                    chidx += 1;
-                    idx_arr += 1;
-                }
-            )*
-            assert!(idx_arr == TOTAL_LEN);
-            arr
-        };
-        const SLI: &[Key] = &ALL_KEYS_MERGED;
-        SLI
-    }};
-}
-
-/// Internal macro for merging generated schemalists, used for
-/// `compose_interfaces!`
-#[macro_export]
-macro_rules! merge_schemalists {
-    ($($($segment:ident)::+$(,)?)*) => {{
-        use postcard_schema_ng::schema::DataModelType;
-        const TOTAL_LEN: usize = $crate::count_nested::<&DataModelType>(
-            &[$(
-                $($segment)::+,
-            )*]
-        );
-        const ALL_SCHEMAS_MERGED: [&DataModelType; TOTAL_LEN] = const {
-            const ONE: &DataModelType = &DataModelType::Unit;
-            let mut arr = [ONE; TOTAL_LEN];
-            let mut idx_arr = 0;
-            $(
-                let mut chidx = 0;
-                while chidx < $($segment)::+.len() {
-                    arr[idx_arr] = $($segment)::+[chidx];
-                    chidx += 1;
-                    idx_arr += 1;
-                }
-            )*
-            assert!(idx_arr == TOTAL_LEN);
-            arr
-        };
-        const SLI: &[&DataModelType] = &ALL_SCHEMAS_MERGED;
-        SLI
-    }};
-}
-
 /// ```rust,ignore
 /// interface! {
 ///      mod: ops,
@@ -119,28 +42,6 @@ macro_rules! interface {
             #[allow(unused_imports)]
             use super::*;
 
-            pub mod schemas {
-                #[allow(unused_imports)]
-                use super::*;
-                use $crate::__private::DataModelType;
-                use $crate::__private::Schema;
-
-                // All schemas, un-deduplicated
-                pub const ALL_REQ_SCHEMAS: &[&DataModelType] = &[
-                    $(
-                        $req_ty::SCHEMA,
-                    )*
-                ];
-                pub const ALL_RESP_SCHEMAS: &[&DataModelType] = &[
-                    $(
-                        $resp_ty::SCHEMA,
-                    )*
-                ];
-
-                pub const MAX_REQ_SIZE: Option<usize> = $crate::max_buf_required(ALL_REQ_SCHEMAS);
-                pub const MAX_RESP_SIZE: Option<usize> = $crate::max_buf_required(ALL_RESP_SCHEMAS);
-            }
-
             /// Calculated keys for all methods in this interface
             pub mod keys {
                 #[allow(unused_imports)]
@@ -150,7 +51,7 @@ macro_rules! interface {
                 $(
                     #[allow(non_upper_case_globals)]
                     pub const $mthd: Key = $crate::__private::Key::for_2ty_path::<$req_ty, $resp_ty>(
-                        stringify!($mthd)
+                        concat!(stringify!($mod_name), "/", stringify!($mthd))
                     );
                 )*
 
@@ -159,6 +60,28 @@ macro_rules! interface {
                         $mthd,
                     )*
                 ];
+            }
+
+            pub mod info {
+                #[allow(unused_imports)]
+                use super::*;
+                use $crate::{EndpointInfo, InterfaceInfo};
+                use $crate::__private::Schema;
+                pub const ALL_ENDPOINT_INFOS: &[EndpointInfo] = &[
+                    $(
+                        EndpointInfo {
+                            name: concat!(stringify!($mod_name), "/", stringify!($mthd)),
+                            key: &super::keys::$mthd,
+                            req_schema: $req_ty::SCHEMA,
+                            resp_schema: $resp_ty::SCHEMA,
+                        },
+                    )*
+                ];
+
+                pub const INTERFACE_INFO: InterfaceInfo = InterfaceInfo {
+                    max_request_size: $crate::req_body_max_buf_required(ALL_ENDPOINT_INFOS),
+                    max_response_size: $crate::resp_body_max_buf_required(ALL_ENDPOINT_INFOS),
+                };
             }
 
             pub trait Server {
@@ -213,6 +136,7 @@ macro_rules! interface {
                     }
                 }
             }
+
             pub trait Client {
                 $(
                     #[allow(clippy::ptr_arg, clippy::needless_lifetimes)]
@@ -277,30 +201,33 @@ macro_rules! compose_interfaces {
         ]
     ) => {
         pub mod $mod_name {
-            pub mod schemas {
-                use $crate::__private::DataModelType;
-                pub const ALL_REQ_SCHEMAS: &[&DataModelType] = $crate::merge_schemalists!(
-                    $(
-                        $($segment)::+::schemas::ALL_REQ_SCHEMAS,
-                    )*
-                );
-                pub const ALL_RESP_SCHEMAS: &[&DataModelType] = $crate::merge_schemalists!(
-                    $(
-                        $($segment)::+::schemas::ALL_RESP_SCHEMAS,
-                    )*
-                );
-
-                pub const MAX_REQ_SIZE: Option<usize> = $crate::max_buf_required(ALL_REQ_SCHEMAS);
-                pub const MAX_RESP_SIZE: Option<usize> = $crate::max_buf_required(ALL_RESP_SCHEMAS);
-            }
-
             pub mod keys {
                 use $crate::__private::Key;
-                pub const ALL_KEYS: &[Key] = $crate::merge_keylists!(
-                    $(
-                        $($segment)::+::keys::ALL_KEYS,
-                    )*
-                );
+                use super::info::ALL_ENDPOINT_INFOS;
+                const LEN: usize = ALL_ENDPOINT_INFOS.len();
+                pub const ALL_KEYS: &[Key] = &$crate::extract_keys::<LEN>(ALL_ENDPOINT_INFOS);
+            }
+
+            pub mod info {
+                #[allow(unused_imports)]
+                use super::*;
+                use $crate::{EndpointInfo, InterfaceInfo};
+                use $crate::__private::Schema;
+                pub const ALL_ENDPOINT_INFOS: &[EndpointInfo] = {
+                    const SETS: &[&[EndpointInfo]] = &[
+                        $(
+                            $($segment)::+::info::ALL_ENDPOINT_INFOS,
+                        )*
+                    ];
+                    const N: usize = $crate::total_len(SETS);
+                    const ARR: [EndpointInfo; N] = $crate::flatten(SETS);
+                    &ARR
+                };
+
+                pub const INTERFACE_INFO: InterfaceInfo = InterfaceInfo {
+                    max_request_size: $crate::req_body_max_buf_required(ALL_ENDPOINT_INFOS),
+                    max_response_size: $crate::resp_body_max_buf_required(ALL_ENDPOINT_INFOS),
+                };
             }
 
             pub trait Server: $($($segment)::+::Server+)* {
@@ -351,22 +278,25 @@ macro_rules! autobuffer {
 
 
         pub struct $name {
-            pub inc: [u8; Self::_REQ_SIZE],
-            pub out: [u8; Self::_RESP_SIZE],
+            pub inc: [u8; Self::_HDR_SIZE + Self::_REQ_SIZE],
+            pub out: [u8; Self::_HDR_SIZE + Self::_RESP_SIZE],
         }
 
         impl $name {
-            const _REQ_SIZE: usize = $($segment)::+::schemas::MAX_REQ_SIZE
+            const _HDR_SIZE: usize = $crate::Header::SCHEMA.max_size()
+            .expect("Unable to automatically size buffer. \
+                Header doesn't have a max size.");
+            const _REQ_SIZE: usize = $($segment)::+::info::INTERFACE_INFO.max_request_size
                 .expect("Unable to automatically size buffer. \
                     One or more request types don't have a max size.");
-            const _RESP_SIZE: usize = $($segment)::+::schemas::MAX_RESP_SIZE
+            const _RESP_SIZE: usize = $($segment)::+::info::INTERFACE_INFO.max_response_size
                 .expect("Unable to automatically size buffer. \
                     One or more response types don't have a max size.");
 
             pub const fn new() -> Self {
                 Self {
-                    inc: [0u8; Self::_REQ_SIZE],
-                    out: [0u8; Self::_RESP_SIZE],
+                    inc: [0u8; Self::_HDR_SIZE + Self::_REQ_SIZE],
+                    out: [0u8; Self::_HDR_SIZE + Self::_RESP_SIZE],
                 }
             }
         }
@@ -519,6 +449,20 @@ pub trait Interface {
     ) -> Result<&'a [u8], Error>;
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct EndpointInfo {
+    pub name: &'static str,
+    pub key: &'static Key,
+    pub req_schema: &'static DataModelType,
+    pub resp_schema: &'static DataModelType,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct InterfaceInfo {
+    pub max_request_size: Option<usize>,
+    pub max_response_size: Option<usize>,
+}
+
 /////////////////////////////////////////////////////////
 // CONST HELPERS
 /////////////////////////////////////////////////////////
@@ -563,13 +507,11 @@ pub const fn count_nested<T>(ts: &[&[T]]) -> usize {
     ct
 }
 
-pub const fn max_buf_required(schemas: &[&DataModelType]) -> Option<usize> {
-    use postcard_schema_ng::Schema;
-    let header_size = Header::SCHEMA.max_size().unwrap();
+pub const fn req_body_max_buf_required(infos: &[EndpointInfo]) -> Option<usize> {
     let mut max = 0;
     let mut idx = 0;
-    while idx < schemas.len() {
-        let Some(m) = schemas[idx].max_size() else {
+    while idx < infos.len() {
+        let Some(m) = infos[idx].req_schema.max_size() else {
             return None;
         };
         if m > max {
@@ -577,5 +519,65 @@ pub const fn max_buf_required(schemas: &[&DataModelType]) -> Option<usize> {
         }
         idx += 1;
     }
-    Some(max + header_size)
+    Some(max)
+}
+
+pub const fn resp_body_max_buf_required(infos: &[EndpointInfo]) -> Option<usize> {
+    let mut max = 0;
+    let mut idx = 0;
+    while idx < infos.len() {
+        let Some(m) = infos[idx].resp_schema.max_size() else {
+            return None;
+        };
+        if m > max {
+            max = m;
+        }
+        idx += 1;
+    }
+    Some(max)
+}
+
+pub const fn total_len(sets: &[&[EndpointInfo]]) -> usize {
+    let mut i = 0;
+    let mut ct = 0;
+    while i < sets.len() {
+        ct += sets[i].len();
+        i += 1;
+    }
+    ct
+}
+
+pub const fn flatten<const N: usize>(sets: &[&[EndpointInfo]]) -> [EndpointInfo; N] {
+    pub const ONE: EndpointInfo = EndpointInfo {
+        name: "",
+        key: &Key::from_bytes([0; 8]),
+        req_schema: &DataModelType::Unit,
+        resp_schema: &DataModelType::Unit,
+    };
+
+    let mut out = [ONE; N];
+    let mut i = 0;
+    let mut n = 0;
+    while i < sets.len() {
+        let mut k = 0;
+        while k < sets[i].len() {
+            out[n] = sets[i][k];
+            k += 1;
+            n += 1;
+        }
+        i += 1;
+    }
+    assert!(n == N);
+    out
+}
+
+pub const fn extract_keys<const N: usize>(infos: &[EndpointInfo]) -> [Key; N] {
+    assert!(N == infos.len());
+    let mut buf = [Key::from_bytes([0u8; 8]); N];
+    let mut idx = 0;
+    while idx < N {
+        buf[idx] = *infos[idx].key;
+        idx += 1;
+    }
+    buf
 }

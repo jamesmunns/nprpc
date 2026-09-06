@@ -143,7 +143,7 @@ impl two::Server for ServerImpl {
 mod test {
     use std::ops::Deref;
 
-    use nprpc::{Backend, Error, Header, Interface, Method, autobuffer, max_buf_required};
+    use nprpc::{Backend, Error, Header, Interface, Method, autobuffer};
     use postcard_schema_ng::key::Key;
 
     use crate::basic::Client;
@@ -216,7 +216,7 @@ mod test {
         }));
 
         let res = cli
-            .send_reply::<u32, u32>(Key::for_2ty_path::<u32, u32>("mult_two"), &200)
+            .send_reply::<u32, u32>(Key::for_2ty_path::<u32, u32>("basic/mult_two"), &200)
             .unwrap();
 
         assert_eq!(res.resp, 400u32);
@@ -254,7 +254,7 @@ mod test {
 
         let res = cli
             .send_reply::<EightString, EightString>(
-                Key::for_2ty_path::<EightString, EightString>("billy"),
+                Key::for_2ty_path::<EightString, EightString>("basic/billy"),
                 &EightString::try_from("boop").unwrap(),
             )
             .unwrap();
@@ -264,26 +264,26 @@ mod test {
 
     #[test]
     pub fn sizes() {
-        for s in composite::schemas::ALL_REQ_SCHEMAS {
-            println!("{s:?} -> {:?}", s.max_size());
-        }
-        println!();
-        for s in composite::schemas::ALL_RESP_SCHEMAS {
-            println!("{s:?} -> {:?}", s.max_size());
-        }
         println!();
         for k in composite::keys::ALL_KEYS {
             println!("{k:?}");
         }
 
         const H: usize = Header::SCHEMA.max_size().unwrap();
-        const A: usize = max_buf_required(composite::schemas::ALL_REQ_SCHEMAS).unwrap();
-        const B: usize = max_buf_required(composite::schemas::ALL_RESP_SCHEMAS).unwrap();
+        const A: usize = composite::info::INTERFACE_INFO.max_request_size.unwrap();
+        const B: usize = composite::info::INTERFACE_INFO.max_response_size.unwrap();
 
         assert_eq!(H, 13);
-        assert_eq!(A, 59);
-        assert_eq!(B, 22);
+        assert_eq!(A, 46);
+        assert_eq!(B, 9);
         // panic to print...
         // panic!();
+    }
+
+    #[test]
+    pub fn info() {
+        for info in composite::info::ALL_ENDPOINT_INFOS {
+            println!("{info:?}");
+        }
     }
 }
