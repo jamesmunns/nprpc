@@ -64,17 +64,21 @@ pub trait Endpoint {
     }
 }
 
-// pub fn process_endpoint<'out, 'de, S: ?Sized, Q, R>(
-//     server: &mut S,
-//     mut hdr: Header,
-//     body: &'de [u8],
-//     out: &'out mut [u8],
-//     apply: fn(&mut S, Request<Q>) -> R,
-// ) -> Result<&'out [u8], Error>
-// where
-//     Q: Deserialize<'de>,
-//     R: Serialize,
-
+/// ## Lifetimes
+///
+/// We support two specific lifetimes when defining an interface:
+///
+/// * `'inc`:
+///     * For servers: this information is borrowed from the raw incoming
+///       request message when deserializing.
+///     * For clients: this information is borrowed from the user-passed request.
+/// * `'srv`:
+///     * For servers: this information is borrowed from the server itself.
+///     * For clients: this information is borrowed from the raw incoming
+///       response message when deserializing.
+///
+/// ## Example
+///
 /// ```rust,ignore
 /// interface! {
 ///      mod: ops,
@@ -87,9 +91,9 @@ pub trait Endpoint {
 macro_rules! interface {
     (
         mod: $mod_name:ident,
-        | method      | request                                  | response                                      |
-        | $(-)*       | $(-)*                                    | $(-)*                                         |
-     $( | $mthd:ident | $req_ty:tt $(< $($req_lt:lifetime),+ >)? | $resp_ty:tt $(< $($resp_lt:lifetime),+ >)?    |)*
+        | method      | request    | response       |
+        | $(-)*       | $(-)*      | $(-)*          |
+     $( | $mthd:ident | $req_ty:ty | $resp_ty:ty    |)*
  ) => {
         /// Module containing server and client
         pub mod $mod_name {
@@ -105,8 +109,8 @@ macro_rules! interface {
                     pub struct $mthd;
 
                     impl $crate::Endpoint for $mthd {
-                        type Request<'inc> = $req_ty $(< $($req_lt),+ >)?;
-                        type Response<'out> = $resp_ty $(< $($resp_lt),+ >)?;
+                        type Request<'inc> = $req_ty;
+                        type Response<'srv> = $resp_ty;
                         const NAME: &'static str = concat!(stringify!($mod_name), "/", stringify!($mthd));
                     }
                 )*
@@ -145,10 +149,10 @@ macro_rules! interface {
             pub trait Server {
                 // Generate all of the user-filled methods
                 $(
-                    fn $mthd<$($($req_lt,)+)? $($($resp_lt,)+)?>(
-                        &mut self,
-                        req: $crate::Request<$req_ty $(< $($req_lt),+ >)? >,
-                    ) -> $resp_ty $(< $($resp_lt),+ >)?;
+                    fn $mthd<'inc, 'srv>(
+                        &'srv mut self,
+                        req: $crate::Request<$req_ty>,
+                    ) -> $resp_ty;
                 )*
 
                 /// This method is the prime dispatcher. It takes a processed header and raw body,
@@ -160,19 +164,6 @@ macro_rules! interface {
                     body: &[u8],
                     output: &'buf mut [u8],
                 ) -> Result<&'buf [u8], $crate::Error> {
-                    // This block ensures that all request types implement the Schema trait and
-                    // the Deserialize trait, giving a more predictable error if not.
-                    $(
-                        const _: () = $crate::assert_impls_schema::<$req_ty>();
-                        const _: () = $crate::assert_impl_deserialize::<'_, $req_ty>();
-                    )*
-                    // This block ensures that all response types implement the Schema trait and
-                    // the Serialize trait, giving a more predictable error if not.
-                    $(
-                        const _: () = $crate::assert_impls_schema::<$resp_ty>();
-                        const _: () = $crate::assert_impl_serialize::<$resp_ty>();
-                    )*
-
                     // This block ensures that there are no key collisions in all endpoints
                     const _: () = $crate::assert_unique(keys::ALL_KEYS);
 
@@ -182,18 +173,6 @@ macro_rules! interface {
                     // basis.
                     match hdr.key {
                         $(
-                            // fn process<'inc, 'out, 'ser>(
-                            //     mut hdr: Header,
-                            //     body: &'inc [u8],
-                            //     out: &'ser mut [u8],
-                            //     func: impl FnOnce(Request<Self::Request<'inc>>) -> Self::Response<'out>,
-                            // ) -> Result<&'ser [u8], Error> {
-
-                            // <gats::$mthd as $crate::Endpoint>::KEY => $crate::process_endpoint::<
-                            //     Self,
-                            //     $req_ty,
-                            //     $resp_ty,
-                            // >(self, hdr, body, output, <Self as Server>::$mthd),
                             <gats::$mthd as $crate::Endpoint>::KEY => {
                                 <gats::$mthd as $crate::Endpoint>::process(
                                     hdr,
@@ -212,17 +191,11 @@ macro_rules! interface {
 
             pub trait Client {
                 $(
-                    #[allow(clippy::ptr_arg, clippy::needless_lifetimes)]
-                    fn $mthd<'me, $($($req_lt,)+)? $($($resp_lt,)+)?>(
-                        &'me mut self,
-                        req: &$req_ty $(< $($req_lt),+ >)?
-                    ) -> Result<
-                        $crate::Response<$resp_ty $(< $($resp_lt),+ >)?,>,
-                        $crate::Error,
-                    >
-                    where
-                        $($('me: $resp_lt,)+)?
-                    ;
+                    #[allow(clippy::ptr_arg)]
+                    fn $mthd<'inc, 'srv>(
+                        &'srv mut self,
+                        req: &$req_ty,
+                    ) -> Result<$crate::Response<$resp_ty>, $crate::Error>;
                 )*
             }
 
@@ -231,16 +204,11 @@ macro_rules! interface {
                 T: $crate::Backend,
             {
                 $(
-                    #[allow(clippy::ptr_arg, clippy::needless_lifetimes)]
-                    fn $mthd<'me, $($($req_lt,)+)? $($($resp_lt,)+)?>(
-                        &'me mut self,
-                        req: &$req_ty $(< $($req_lt),+ >)?
-                    ) -> Result<
-                        $crate::Response<$resp_ty $(< $($resp_lt),+ >)?,>,
-                        $crate::Error,
-                    >
-                    where
-                        $($('me: $resp_lt,)+)?
+                    #[allow(clippy::ptr_arg)]
+                    fn $mthd<'inc, 'srv>(
+                        &'srv mut self,
+                        req: &$req_ty,
+                    ) -> Result<$crate::Response<$resp_ty>, $crate::Error>
                     {
                         self.send_reply::<$req_ty, $resp_ty>(
                             <gats::$mthd as $crate::Endpoint>::KEY,
@@ -420,36 +388,6 @@ pub enum Error {
     VersionMismatch,
 }
 
-pub fn process_endpoint<'out, 'de, S: ?Sized, Q, R>(
-    server: &mut S,
-    mut hdr: Header,
-    body: &'de [u8],
-    out: &'out mut [u8],
-    apply: fn(&mut S, Request<Q>) -> R,
-) -> Result<&'out [u8], Error>
-where
-    Q: Deserialize<'de>,
-    R: Serialize,
-{
-    // Deserialize
-    let body: Q = postcard::from_bytes(body).map_err(Error::PostcardDeser)?;
-    // Process request
-    let req = Request {
-        hdr: hdr.clone(),
-        req: body,
-    };
-    let resp = apply(server, req);
-    // Serialize response
-    let mut out = Serializer {
-        output: SerSlice::new(out),
-    };
-    hdr.method = Method::Response;
-    hdr.serialize(&mut out).map_err(Error::PostcardSer)?;
-    resp.serialize(&mut out).map_err(Error::PostcardSer)?;
-    let used = out.output.finalize().map_err(Error::PostcardSer)?;
-    Ok(used)
-}
-
 pub trait Backend {
     type Storage: Storage;
     type Interface: Interface;
@@ -540,9 +478,6 @@ pub struct InterfaceInfo {
 // CONST HELPERS
 /////////////////////////////////////////////////////////
 
-pub const fn assert_impls_schema<T: postcard_schema_ng::Schema>() {}
-pub const fn assert_impl_serialize<T: serde::Serialize>() {}
-pub const fn assert_impl_deserialize<'d, T: serde::Deserialize<'d>>() {}
 pub const fn assert_unique(keys: &[Key]) {
     let mut i = 0;
     while i < keys.len() {
@@ -568,16 +503,6 @@ pub const fn assert_unique(keys: &[Key]) {
         }
         i += 1;
     }
-}
-
-pub const fn count_nested<T>(ts: &[&[T]]) -> usize {
-    let mut idx = 0;
-    let mut ct = 0;
-    while idx < ts.len() {
-        ct += ts[idx].len();
-        idx += 1;
-    }
-    ct
 }
 
 pub const fn req_body_max_buf_required(infos: &[EndpointInfo]) -> Option<usize> {

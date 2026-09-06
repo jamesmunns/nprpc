@@ -23,7 +23,7 @@ pub struct Fancy {
 type EightString<'a> = postcard_schema_ng::max_len::MaxLenStr<'a, 8>;
 
 #[cfg(feature = "std")]
-type EightString = postcard_schema_ng::max_len::MaxLenString<8>;
+use postcard_schema_ng::max_len::{MaxLenStr, MaxLenString};
 
 /////////////////////////////////////////////////////
 // Interface definitions
@@ -50,15 +50,15 @@ interface! {
 #[cfg(feature = "std")]
 interface! {
      mod: basic,
-     | method     | request     | response      |
-     | ------     | -------     | --------      |
-     | mult_two   | u32         | u32           |
-     | to_stringa | u32         | EightString   |
-     | to_stringb | EightString | u32           |
-     | billy      | EightString | EightString   |
-     | to_stringd | EightString | EightString   |
-     | is_good    | Fancy       | bool          |
-     | fancy_boi  | Fancy       | u32           |
+     | method     | request         | response          |
+     | ------     | -------         | --------          |
+     | mult_two   | u32             | u32               |
+     | to_stringa | u32             | MaxLenString<8>   |
+     | to_stringb | MaxLenString<8> | u32               |
+     | billy      | MaxLenString<8> | MaxLenString<8>   |
+     | to_stringd | MaxLenString<8> | MaxLenString<8>   |
+     | is_good    | Fancy           | bool              |
+     | fancy_boi  | Fancy           | u32               |
 }
 
 interface! {
@@ -94,23 +94,23 @@ impl basic::Server for ServerImpl {
         req.req * 2
     }
 
-    fn to_stringa(&mut self, req: Request<u32>) -> EightString {
+    fn to_stringa(&mut self, req: Request<u32>) -> MaxLenString<8> {
         req.req.to_string().try_into().unwrap()
     }
 
-    fn to_stringb(&mut self, req: Request<EightString>) -> u32 {
+    fn to_stringb(&mut self, req: Request<MaxLenString<8>>) -> u32 {
         req.req.len() as u32
     }
 
-    fn to_stringd(&mut self, req: Request<EightString>) -> EightString {
+    fn to_stringd(&mut self, req: Request<MaxLenString<8>>) -> MaxLenString<8> {
         req.req
     }
 
-    fn billy(&mut self, req: Request<EightString>) -> EightString {
+    fn billy(&mut self, req: Request<MaxLenString<8>>) -> MaxLenString<8> {
         if req.req.len() > 5 {
-            EightString::try_from(":(").unwrap()
+            MaxLenString::<8>::try_from(":(").unwrap()
         } else {
-            EightString::try_from(":)").unwrap()
+            MaxLenString::<8>::try_from(":)").unwrap()
         }
     }
 
@@ -136,6 +136,30 @@ impl ops::Server for ServerImpl {
 impl two::Server for ServerImpl {
     fn one_more_thing(&mut self, req: Request<u32>) -> bool {
         req.req.is_multiple_of(2)
+    }
+}
+
+#[cfg(feature = "std")]
+interface! {
+     mod: borrow,
+     | method     | request             | response            |
+     | ------     | -------             | --------            |
+     | fancy_boi2 | Fancy               | MaxLenStr<'srv, 8>  |
+     | fancy_boi3 | Fancy               | &'srv str           |
+     | fancy_boi4 | MaxLenStr<'inc, 8>  | Fancy               |
+}
+
+impl borrow::Server for ServerImpl {
+    fn fancy_boi2<'srv>(&'srv mut self, _req: nprpc::Request<Fancy>) -> MaxLenStr<'srv, 8> {
+        todo!()
+    }
+
+    fn fancy_boi3(&mut self, _req: nprpc::Request<Fancy>) -> &str {
+        todo!()
+    }
+
+    fn fancy_boi4<'inc>(&mut self, _req: nprpc::Request<MaxLenStr<'inc, 8>>) -> Fancy {
+        todo!()
     }
 }
 
@@ -253,9 +277,9 @@ mod test {
         }));
 
         let res = cli
-            .send_reply::<EightString, EightString>(
-                Key::for_2ty_path::<EightString, EightString>("basic/billy"),
-                &EightString::try_from("boop").unwrap(),
+            .send_reply::<MaxLenString<8>, MaxLenString<8>>(
+                Key::for_2ty_path::<MaxLenString<8>, MaxLenString<8>>("basic/billy"),
+                &MaxLenString::<8>::try_from("boop").unwrap(),
             )
             .unwrap();
 
