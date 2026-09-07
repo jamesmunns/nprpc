@@ -1,4 +1,4 @@
-use nprpc::{compose_interfaces, interface};
+use nprpc::{autobuffer, compose_interfaces, interface};
 use postcard_schema_ng::Schema;
 use serde::{Deserialize, Serialize};
 
@@ -30,42 +30,41 @@ use postcard_schema_ng::max_len::{MaxLenStr, MaxLenString};
 /////////////////////////////////////////////////////
 
 interface! {
-     mod: ops,
-     | method            | request       | response      |
-     | ------            | -------       | --------      |
-     | mult_three        | u32           | u32           |
-}
-
-#[cfg(not(feature = "std"))]
-interface! {
-     mod: basic,
-     | method     | request             | response          |
-     | ------     | -------             | --------          |
-     | mult_two   | u32                 | u32               |
-     | to_stringa | u32                 | EightString<'b>    |
-     | to_stringb | EightString<'a>     | u32               |
-     | billy      | EightString<'a>     | EightString<'b>    |
-}
-
-#[cfg(feature = "std")]
-interface! {
-     mod: basic,
-     | method     | request         | response          |
-     | ------     | -------         | --------          |
-     | mult_two   | u32             | u32               |
-     | to_stringa | u32             | MaxLenString<8>   |
-     | to_stringb | MaxLenString<8> | u32               |
-     | billy      | MaxLenString<8> | MaxLenString<8>   |
-     | to_stringd | MaxLenString<8> | MaxLenString<8>   |
-     | is_good    | Fancy           | bool              |
-     | fancy_boi  | Fancy           | u32               |
+    mod ops {
+        fn mult_three(u32) -> u32;
+    }
 }
 
 interface! {
-     mod: two,
-     | method         | request | response |
-     | ------         | ------- | -------- |
-     | one_more_thing | u32     | bool     |
+    /// This is a basic interface
+    ///
+    /// It's good for stuff and things.
+    mod basic {
+        /// Beep
+        fn mult_two(u32) -> u32;
+        /// Boop
+        fn to_stringa(u32) -> MaxLenString<8>;
+        /// Bib
+        fn to_stringb(MaxLenString<8>) -> u32;
+        /// Bim - when used on a desktop
+        #[cfg(feature = "std")]
+        fn billy(MaxLenString<8>) -> MaxLenString<8>;
+        /// Bim - when used on embedded
+        #[cfg(not(feature = "std"))]
+        fn billy(MaxLenStr<'req, 8>) -> MaxLenStr<'resp, 8>;
+        /// Bap
+        fn to_stringd(MaxLenString<8>) -> MaxLenString<8>;
+        /// Swoop
+        fn is_good(Fancy) -> bool;
+        /// Scoop
+        fn fancy_boi(Fancy) -> u32;
+    }
+}
+
+interface! {
+    mod two {
+        fn one_more_thing(u32) -> bool;
+    }
 }
 
 compose_interfaces! {
@@ -79,10 +78,9 @@ compose_interfaces! {
 
 // interface without auto-sizable buffers
 interface! {
-     mod: unsizable,
-     | method            | request       | response      |
-     | ------            | -------       | --------      |
-     | s2s               | String        | String        |
+    mod unsizable {
+        fn s2s(String) -> String;
+    }
 }
 
 pub struct ServerImpl;
@@ -128,8 +126,8 @@ impl basic::Server for ServerImpl {
 }
 
 impl ops::Server for ServerImpl {
-    fn mult_three(&mut self, req: Request<u32>) -> u32 {
-        req.req * 3
+    fn mult_three(&mut self, _req: nprpc::Request<u32>) -> u32 {
+        todo!()
     }
 }
 
@@ -140,28 +138,27 @@ impl two::Server for ServerImpl {
 }
 
 #[cfg(feature = "std")]
+
 interface! {
-     mod: borrow,
-     | method     | request             | response            |
-     | ------     | -------             | --------            |
-     | fancy_boi2 | Fancy               | MaxLenStr<'srv, 8>  |
-     | fancy_boi3 | Fancy               | &'srv str           |
-     | fancy_boi4 | MaxLenStr<'inc, 8>  | Fancy               |
-}
-
-impl borrow::Server for ServerImpl {
-    fn fancy_boi2<'srv>(&'srv mut self, _req: nprpc::Request<Fancy>) -> MaxLenStr<'srv, 8> {
-        todo!()
-    }
-
-    fn fancy_boi3(&mut self, _req: nprpc::Request<Fancy>) -> &str {
-        todo!()
-    }
-
-    fn fancy_boi4<'inc>(&mut self, _req: nprpc::Request<MaxLenStr<'inc, 8>>) -> Fancy {
-        todo!()
+    mod borrow {
+        fn fancy_boi2(Fancy) -> MaxLenStr<'resp, 8>;
+        fn fancy_boi4(MaxLenStr<'req, 8>) -> Fancy;
+        fn bypass(MaxLenStr<'req, 8>) -> MaxLenStr<'resp, 8>;
     }
 }
+
+autobuffer!(BorrowBuf, borrow);
+
+// TODO: I think the syntax for proxying could work by overriding
+// `Server::process_one`, something like:
+//
+// impl borrow::Server for ServerImpl {
+//     proxy! {
+//         fn fancy_boi2 -> self.packrat;
+//         fn fancy_boi4 -> self.packrat;
+//         fn bypass -> self.packrat;
+//     }
+// }
 
 #[cfg(test)]
 mod test {

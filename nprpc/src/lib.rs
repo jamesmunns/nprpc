@@ -10,6 +10,7 @@ use postcard::{
 use postcard_schema_ng::{Schema, key::Key, schema::DataModelType};
 use serde::{Deserialize, Serialize};
 
+/// Not covered by semver, re-exported items for external macros
 #[doc(hidden)]
 pub mod __private {
     pub use postcard_schema_ng::Schema;
@@ -18,13 +19,9 @@ pub mod __private {
     pub use serde::{Deserialize, Serialize};
 }
 
-/////////////////////////////////////////////////////////
-// MACROS
-/////////////////////////////////////////////////////////
-
 pub trait Endpoint {
-    type Request<'inc>: Schema + Deserialize<'inc>;
-    type Response<'out>: Schema + Serialize;
+    type Request<'req>: Schema + Deserialize<'req>;
+    type Response<'resp>: Schema + Serialize;
 
     const NAME: &'static str;
 
@@ -33,17 +30,17 @@ pub trait Endpoint {
 
     const INFO: EndpointInfo = EndpointInfo {
         name: Self::NAME,
-        key: &Self::KEY,
+        key: Self::KEY,
         req_schema: <Self::Request<'static> as Schema>::SCHEMA,
         resp_schema: <Self::Response<'static> as Schema>::SCHEMA,
     };
 
-    fn process<'inc, 'out, 'ser>(
+    fn process<'req, 'resp, 'out>(
         mut hdr: Header,
-        body: &'inc [u8],
-        out: &'ser mut [u8],
-        func: impl FnOnce(Request<Self::Request<'inc>>) -> Self::Response<'out>,
-    ) -> Result<&'ser [u8], Error> {
+        body: &'req [u8],
+        out: &'out mut [u8],
+        func: impl FnOnce(Request<Self::Request<'req>>) -> Self::Response<'resp>,
+    ) -> Result<&'out [u8], Error> {
         // Deserialize
         let body: Self::Request<'_> = postcard::from_bytes(body).map_err(Error::PostcardDeser)?;
         // Process request
@@ -64,53 +61,125 @@ pub trait Endpoint {
     }
 }
 
+/////////////////////////////////////////////////////////
+// MACROS
+/////////////////////////////////////////////////////////
+
+/// # Interface Definition macro
+///
+/// This macro is used for defining an **interface**, a set of methods with
+/// associated request and response types.
+///
 /// ## Lifetimes
 ///
 /// We support two specific lifetimes when defining an interface:
 ///
-/// * `'inc`:
+/// * `'req`:
 ///     * For servers: this information is borrowed from the raw incoming
 ///       request message when deserializing.
 ///     * For clients: this information is borrowed from the user-passed request.
-/// * `'srv`:
+///     * This is the only lifetime that can be used for requests.
+/// * `'resp`:
 ///     * For servers: this information is borrowed from the server itself.
 ///     * For clients: this information is borrowed from the raw incoming
 ///       response message when deserializing.
+///     * This is the only lifetime that can be used for responses.
 ///
 /// ## Example
 ///
-/// ```rust,ignore
+/// ```rust
+/// # #![allow(clippy::unexpected_cfgs)]
+/// use nprpc::interface;
+///
+/// // This defines an interface. This interface is called "example".
+/// // We use the `mod` keyword because we generate a Rust `mod` with
+/// // the given name, containing various `trait`s and `const` metadata.
 /// interface! {
-///      mod: ops,
-///      | method            | request       | response      |
-///      | ------            | -------       | --------      |
-///      | mult_three        | u32           | u32           |
+///     /// Module level comments are supported, and will be places on the
+///     /// generated module.
+///     mod example {
+///         /// Doc comments are also supported on the interface methods
+///         ///
+///         /// All interfaces take a single request type and return a single
+///         /// response type. You can use `()` if you don't need one or either.
+///         fn is_even(u32) -> bool;
+///
+///         /// `cfg` features are also supported. In this example, the
+///         /// `mult_three` method is only present if the `"odd"` feature is
+///         /// activated.
+///         #[cfg(feature = "odd")]
+///         fn mult_three(u32) -> u32;
+///
+///         /// We can also use `cfg` features to abstract over systems that do
+///         /// or don't have a heap. We support "type punning", any type that
+///         /// is string-shaped has the same schema, and therefore is
+///         /// compatible, even if the systems hold them differently.
+///         ///
+///         /// On our no-std system, we will use a borrowed string with a
+///         /// bounded max len of 3 elements, enough to convert the `u8` to
+///         /// text. We can use the `'rsp` lifetime to for borrowed responses.
+///         #[cfg(not(feature = "std"))]
+///         fn to_string(u8) -> postcard_schema_ng::max_len::MaxLenStr<'rsp, 3>;
+///
+///         /// On a hosted machine, we might not want to borrow our data, and
+///         /// instead directly heap-allocate the response instead. Notice how
+///         /// We don't include the lifetime here, because the response will
+///         /// be owned, and not borrowed.
+///         ///
+///         /// You can also use types like `heapless::Vec<u32, N>` (on no-std)
+///         /// non-borrowed collections, and then use `std::vec::Vec<u32>` on
+///         /// the hosted machine.
+///         #[cfg(feature = "std")]
+///         fn to_string(u8) -> postcard_schema_ng::max_len::MaxLenString<3>;
+///
+///         /// We can also borrow from the incoming message to get a borrowed
+///         /// str out of the request, using the `'req` lifetime.
+///         fn to_byte(postcard_schema_ng::max_len::MaxLenStr<'req, 3>) -> u8;
+///     }
 /// }
 /// ```
 #[macro_export]
 macro_rules! interface {
     (
-        mod: $mod_name:ident,
-        | method      | request    | response       |
-        | $(-)*       | $(-)*      | $(-)*          |
-     $( | $mthd:ident | $req_ty:ty | $resp_ty:ty    |)*
+        $(#[doc = $mod_doc:literal])*
+        mod $mod_name:ident {
+            $(
+                $(#[doc = $mthd_doc:literal])*
+                $(#[cfg($mthd_cfg:meta)])*
+                fn $mthd:ident($req_ty:ty) -> $resp_ty:ty;
+            )*
+        }
  ) => {
-        /// Module containing server and client
+        #[doc = concat!("`", stringify!($mod_name), "` interface definition")]
+        ///
+        /// Generated interface definition. See the [`Server`] and [`Client`]
+        /// traits for more information.
+        ///
+        #[doc = concat!("[`Server`]: ", stringify!($mod_name), "::Server")]
+        #[doc = concat!("[`Client`]: ", stringify!($mod_name), "::Client")]
         pub mod $mod_name {
             #[allow(unused_imports)]
             use super::*;
+            use $crate::Backend;
 
-            pub mod gats {
+            /// The `endpoints` module contains metadata about each of the methods
+            /// of an interface, and implementations of the `Endpoint` trait.
+            ///
+            /// You don't usually need to use these items directly.
+            pub mod endpoints {
                 #[allow(unused_imports)]
                 use super::*;
 
                 $(
+                    $(#[doc = $mthd_doc])*
+                    $(#[cfg($mthd_cfg)])?
                     #[allow(non_camel_case_types)]
                     pub struct $mthd;
 
+                    $(#[cfg($mthd_cfg)])?
                     impl $crate::Endpoint for $mthd {
-                        type Request<'inc> = $req_ty;
-                        type Response<'srv> = $resp_ty;
+                        type Request<'req> = $req_ty;
+                        type Response<'resp> = $resp_ty;
                         const NAME: &'static str = concat!(stringify!($mod_name), "/", stringify!($mthd));
                     }
                 )*
@@ -122,37 +191,47 @@ macro_rules! interface {
                 use super::*;
                 use $crate::__private::Key;
 
+                /// All calculated [`Key`]s used for methods in this interface
                 pub const ALL_KEYS: &[Key] = &[
                     $(
-                        <gats::$mthd as $crate::Endpoint>::KEY,
+                        $(#[cfg($mthd_cfg)])?
+                        <endpoints::$mthd as $crate::Endpoint>::KEY,
                     )*
                 ];
             }
 
+            /// The `info` module contains metadata about the interface itself.
+            ///
+            /// You don't usually need to use these items directly.
             pub mod info {
                 #[allow(unused_imports)]
                 use super::*;
                 use $crate::{EndpointInfo, InterfaceInfo, Endpoint};
-                use $crate::__private::Schema;
-                pub const ALL_ENDPOINT_INFOS: &[EndpointInfo] = &[
+
+                /// A list of [`EndpointInfo`] for all methods of this interface
+                const ALL_ENDPOINT_INFOS: &[EndpointInfo] = &[
                     $(
-                        <super::gats::$mthd as Endpoint>::INFO,
+                        $(#[cfg($mthd_cfg)])?
+                        <super::endpoints::$mthd as Endpoint>::INFO,
                     )*
                 ];
 
+                /// Information about the interface, including the list of all endpoints
+                /// and the max request/response body size (NOT including any headers!).
                 pub const INTERFACE_INFO: InterfaceInfo = InterfaceInfo {
                     max_request_size: $crate::req_body_max_buf_required(ALL_ENDPOINT_INFOS),
                     max_response_size: $crate::resp_body_max_buf_required(ALL_ENDPOINT_INFOS),
+                    endpoints: ALL_ENDPOINT_INFOS,
                 };
             }
 
+            #[doc = concat!("The `", stringify!($mod_name), "` interface server trait")]
             pub trait Server {
-                // Generate all of the user-filled methods
+                // Generate all of the user-filled method declarations
                 $(
-                    fn $mthd<'inc, 'srv>(
-                        &'srv mut self,
-                        req: $crate::Request<$req_ty>,
-                    ) -> $resp_ty;
+                    $(#[doc = $mthd_doc])*
+                    $(#[cfg($mthd_cfg)])?
+                    fn $mthd<'req, 'resp>(&'resp mut self, req: $crate::Request<$req_ty>) -> $resp_ty;
                 )*
 
                 /// This method is the prime dispatcher. It takes a processed header and raw body,
@@ -173,8 +252,9 @@ macro_rules! interface {
                     // basis.
                     match hdr.key {
                         $(
-                            <gats::$mthd as $crate::Endpoint>::KEY => {
-                                <gats::$mthd as $crate::Endpoint>::process(
+                            $(#[cfg($mthd_cfg)])?
+                            <endpoints::$mthd as $crate::Endpoint>::KEY => {
+                                <endpoints::$mthd as $crate::Endpoint>::process(
                                     hdr,
                                     body,
                                     output,
@@ -189,29 +269,33 @@ macro_rules! interface {
                 }
             }
 
+            #[doc = concat!("The `", stringify!($mod_name), "` client trait")]
+            ///
+            /// The `Client` trait is an extension trait that is implemented for
+            /// all [`Backend`] implementations.
             pub trait Client {
                 $(
+                    $(#[doc = $mthd_doc])*
+                    $(#[cfg($mthd_cfg)])?
                     #[allow(clippy::ptr_arg)]
-                    fn $mthd<'inc, 'srv>(
-                        &'srv mut self,
-                        req: &$req_ty,
-                    ) -> Result<$crate::Response<$resp_ty>, $crate::Error>;
+                    fn $mthd<'req, 'resp>(&'resp mut self, req: &$req_ty)
+                        -> Result<$crate::Response<$resp_ty>, $crate::Error>;
                 )*
             }
 
             impl<T> Client for T
             where
-                T: $crate::Backend,
+                T: Backend,
             {
                 $(
+                    $(#[doc = $mthd_doc])*
+                    $(#[cfg($mthd_cfg)])?
                     #[allow(clippy::ptr_arg)]
-                    fn $mthd<'inc, 'srv>(
-                        &'srv mut self,
-                        req: &$req_ty,
-                    ) -> Result<$crate::Response<$resp_ty>, $crate::Error>
+                    fn $mthd<'req, 'resp>(&'resp mut self, req: &$req_ty)
+                        -> Result<$crate::Response<$resp_ty>, $crate::Error>
                     {
                         self.send_reply::<$req_ty, $resp_ty>(
-                            <gats::$mthd as $crate::Endpoint>::KEY,
+                            <endpoints::$mthd as $crate::Endpoint>::KEY,
                             req,
                         )
                     }
@@ -253,11 +337,10 @@ macro_rules! compose_interfaces {
                 #[allow(unused_imports)]
                 use super::*;
                 use $crate::{EndpointInfo, InterfaceInfo};
-                use $crate::__private::Schema;
                 pub const ALL_ENDPOINT_INFOS: &[EndpointInfo] = {
                     const SETS: &[&[EndpointInfo]] = &[
                         $(
-                            $($segment)::+::info::ALL_ENDPOINT_INFOS,
+                            $($segment)::+::info::INTERFACE_INFO.endpoints,
                         )*
                     ];
                     const N: usize = $crate::total_len(SETS);
@@ -268,6 +351,7 @@ macro_rules! compose_interfaces {
                 pub const INTERFACE_INFO: InterfaceInfo = InterfaceInfo {
                     max_request_size: $crate::req_body_max_buf_required(ALL_ENDPOINT_INFOS),
                     max_response_size: $crate::resp_body_max_buf_required(ALL_ENDPOINT_INFOS),
+                    endpoints: ALL_ENDPOINT_INFOS,
                 };
             }
 
@@ -324,7 +408,7 @@ macro_rules! autobuffer {
         }
 
         impl $name {
-            const _HDR_SIZE: usize = $crate::Header::SCHEMA.max_size()
+            const _HDR_SIZE: usize = <$crate::Header as $crate::__private::Schema>::SCHEMA.max_size()
             .expect("Unable to automatically size buffer. \
                 Header doesn't have a max size.");
             const _REQ_SIZE: usize = $($segment)::+::info::INTERFACE_INFO.max_request_size
@@ -463,7 +547,7 @@ pub trait Interface {
 #[derive(Debug, Clone, Copy)]
 pub struct EndpointInfo {
     pub name: &'static str,
-    pub key: &'static Key,
+    pub key: Key,
     pub req_schema: &'static DataModelType,
     pub resp_schema: &'static DataModelType,
 }
@@ -472,6 +556,7 @@ pub struct EndpointInfo {
 pub struct InterfaceInfo {
     pub max_request_size: Option<usize>,
     pub max_response_size: Option<usize>,
+    pub endpoints: &'static [EndpointInfo],
 }
 
 /////////////////////////////////////////////////////////
@@ -548,7 +633,7 @@ pub const fn total_len(sets: &[&[EndpointInfo]]) -> usize {
 pub const fn flatten<const N: usize>(sets: &[&[EndpointInfo]]) -> [EndpointInfo; N] {
     pub const ONE: EndpointInfo = EndpointInfo {
         name: "",
-        key: &Key::from_bytes([0; 8]),
+        key: Key::from_bytes([0; 8]),
         req_schema: &DataModelType::Unit,
         resp_schema: &DataModelType::Unit,
     };
@@ -574,7 +659,7 @@ pub const fn extract_keys<const N: usize>(infos: &[EndpointInfo]) -> [Key; N] {
     let mut buf = [Key::from_bytes([0u8; 8]); N];
     let mut idx = 0;
     while idx < N {
-        buf[idx] = *infos[idx].key;
+        buf[idx] = infos[idx].key;
         idx += 1;
     }
     buf

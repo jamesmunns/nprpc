@@ -8,4 +8,4 @@ members = ["demo/demo-api",
 [workspace.dependencies]
 postcard = "1.1.3"
 # branch: james/twohash
-postcard-schema-ng = { git = "https://github.com/jamesmunns/postcard", rev = "393441f", features = ["derive"] }
+postcard-schema-ng = { git = "https://github.com/jamesmunns/postcard", rev = "ed97b79", features = ["derive"] }
