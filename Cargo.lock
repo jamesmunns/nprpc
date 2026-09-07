@@ -246,6 +246,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "udp-api"
+version = "0.1.0"
+dependencies = [
+ "nprpc",
+ "postcard",
+ "postcard-schema-ng",
+ "serde",
+]
+
+[[package]]
+name = "udp-client"
+version = "0.1.0"
+dependencies = [
+ "nprpc",
+ "postcard",
+ "udp-api",
+]
+
+[[package]]
+name = "udp-server"
+version = "0.1.0"
+dependencies = [
+ "nprpc",
+ "postcard",
+ "udp-api",
+]
+
+[[package]]
 name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
