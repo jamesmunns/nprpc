@@ -1,23 +1,20 @@
-use std::{net::UdpSocket, num::Wrapping};
+use std::{net::UdpSocket, num::Wrapping, time::Duration};
 
 use nprpc::{
     autobuffer,
     client::{Backend, Interface},
 };
-use udp_api::hello::Client;
 
-autobuffer!(ApiBufs, udp_api::hello);
+// TODO: compose clients
+use udp_api::hello::Client as _;
+use udp_api::kv::Client as _;
 
-struct ConnectedUdpSocket(UdpSocket);
-
-struct MyClient {
-    ctr: Wrapping<u16>,
-    buf: ApiBufs,
-    socket: ConnectedUdpSocket,
-}
+autobuffer!(ApiBufs, udp_api::composite);
 
 // This could live in nprpc? Requires already connected I think, so maybe need
 // a wrapper type? Or we should use send_to?
+struct ConnectedUdpSocket(UdpSocket);
+
 impl Interface for ConnectedUdpSocket {
     fn send_reply_raw<'a>(
         &mut self,
@@ -29,6 +26,12 @@ impl Interface for ConnectedUdpSocket {
         let used = self.0.recv(incoming).unwrap();
         Ok(&incoming[..used])
     }
+}
+
+struct MyClient {
+    ctr: Wrapping<u16>,
+    buf: ApiBufs,
+    socket: ConnectedUdpSocket,
 }
 
 impl Backend for MyClient {
@@ -66,8 +69,19 @@ fn main() {
 
     for i in 0..3 {
         let got = client.loopback(&i).unwrap();
-        println!("Success:");
+        println!("Loopback Success:");
         println!("  - hdr:  {:?}", got.hdr);
-        println!("  - resp: {}", got.resp)
+        println!("  - resp: {}", got.resp);
+
+        println!();
+        println!("Get name...");
+        let name = client.get_name(&()).unwrap();
+        println!("  - resp: {:?}", name.resp);
+
+        let new_name = format!("Server {i}").try_into().unwrap();
+        println!("Set name ({new_name:?})...");
+        let _ = client.set_name(&new_name).unwrap();
+
+        std::thread::sleep(Duration::from_secs(1));
     }
 }
