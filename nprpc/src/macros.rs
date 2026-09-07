@@ -1,30 +1,24 @@
 use postcard_schema_ng::key::Key;
 
-pub const fn assert_unique(keys: &[Key]) {
+/// Check whether any duplicates are present in the given list.
+///
+/// Returns `false` if duplicates were found (NOT unique), otherwise returns
+/// `true`.
+pub const fn assert_unique(keys: &[Key]) -> bool {
     let mut i = 0;
     while i < keys.len() {
         let mut j = i + 1;
+        let a = u64::from_le_bytes(keys[i].to_bytes());
         while j < keys.len() {
-            if i != j {
-                let mut matches = true;
-                let mut k = 0;
-                let a = keys[i].to_bytes();
-                let b = keys[j].to_bytes();
-                while k < a.len() {
-                    if a[k] != b[k] {
-                        matches = false;
-                        break;
-                    }
-                    k += 1;
-                }
-                if matches {
-                    panic!("Key collision!");
-                }
+            let b = u64::from_le_bytes(keys[j].to_bytes());
+            if a == b {
+                return false;
             }
             j += 1;
         }
         i += 1;
     }
+    true
 }
 
 /// # Interface Definition macro
@@ -206,7 +200,10 @@ macro_rules! interface {
                     output: &'buf mut [u8],
                 ) -> Result<&'buf [u8], $crate::Error> {
                     // This block ensures that there are no key collisions in all endpoints
-                    const _: () = $crate::macros::assert_unique(keys::ALL_KEYS);
+                    const _: () = assert!(
+                        $crate::macros::assert_unique(keys::ALL_KEYS),
+                        concat!("key collision in interface `", stringify!($mod_name), "`"),
+                    );
 
                     if hdr.method != Method::Request {
                         return Err($crate::Error::WrongMethod);
@@ -242,34 +239,22 @@ macro_rules! interface {
             ///
             /// The `Client` trait is an extension trait that is implemented for
             /// all [`Backend`] implementations.
-            pub trait Client {
+            pub trait Client: Backend {
                 $(
                     $(#[doc = $mthd_doc])*
                     $(#[cfg($mthd_cfg)])?
                     #[allow(clippy::ptr_arg)]
                     fn $mthd<'req, 'resp>(&'resp mut self, req: &$req_ty)
-                        -> Result<$crate::Response<$resp_ty>, $crate::Error>;
+                        -> Result<$crate::Response<$resp_ty>, $crate::Error> {
+                            self.send_reply::<$req_ty, $resp_ty>(
+                                <endpoints::$mthd as $crate::interface::Endpoint>::KEY,
+                                req,
+                            )
+                        }
                 )*
             }
 
-            impl<T> Client for T
-            where
-                T: Backend,
-            {
-                $(
-                    $(#[doc = $mthd_doc])*
-                    $(#[cfg($mthd_cfg)])?
-                    #[allow(clippy::ptr_arg)]
-                    fn $mthd<'req, 'resp>(&'resp mut self, req: &$req_ty)
-                        -> Result<$crate::Response<$resp_ty>, $crate::Error>
-                    {
-                        self.send_reply::<$req_ty, $resp_ty>(
-                            <endpoints::$mthd as $crate::interface::Endpoint>::KEY,
-                            req,
-                        )
-                    }
-                )*
-            }
+            impl<T: Backend> Client for T {}
         }
     };
 }
@@ -324,7 +309,7 @@ macro_rules! compose_interfaces {
                 };
             }
 
-            pub trait Server: $($($segment)::+::Server+)* {
+            pub trait Server {
                 fn process_one<'buf>(
                     &mut self,
                     hdr: $crate::wire::Header,
@@ -335,6 +320,31 @@ macro_rules! compose_interfaces {
 
             // TODO: Remove this blanket impl (or make optional) to allow for
             // proxying here?
+            //
+            // UPDATE: I think we keep this as-is, because it's only implemented
+            // for T's that implement ALL sub-server traits.
+            //
+            // If we have three interfaces A, B, C; and the server implements
+            // A and B as a server, and wants to proxy C, it *won't* automatically
+            // get this impl, and still allows for a separate `declare proxies`
+            // macro that looks like:
+            //
+            // ```rust
+            // server_impl! {
+            //      impl composite::Server for ServerImpl {
+            //          // These are handled by ServerImpl's normal impls, and
+            //          // calls `process_one` like we do in this macro below
+            //          crate::a => self,
+            //          crate::b => self,
+            //
+            //          // This requires that ServerImpl holds a `c_client` that
+            //          // implements the `c::Client` trait, and calls some kind
+            //          // of raw proxy method on the client trait that skips
+            //          // the serialization/deserialization steps.
+            //          crate::c => proxy(self.c_client),
+            //      }
+            // }
+            // ```
             impl<T> Server for T
             where
                 $(T: $($segment)::+::Server,)*
@@ -347,7 +357,10 @@ macro_rules! compose_interfaces {
                 ) -> Result<&'buf [u8], $crate::Error> {
                     // Check all the merged keys to make sure that none of the composed
                     // endpoints have a collision
-                    const _: () = $crate::macros::assert_unique(keys::ALL_KEYS);
+                    const _: () = assert!(
+                        $crate::macros::assert_unique(keys::ALL_KEYS),
+                        concat!("key collision in composite interface `", stringify!($mod_name), "`"),
+                    );
 
                     $(
                         // We know that all keys are unique, so instead of pre-checking whether a
@@ -374,15 +387,15 @@ macro_rules! autobuffer {
 
 
         pub struct $name {
-            pub inc: [u8; Self::_HDR_SIZE + Self::_REQ_SIZE],
-            pub out: [u8; Self::_HDR_SIZE + Self::_RESP_SIZE],
+            pub rqst_buf: [u8; Self::_HDR_SIZE + Self::_RQST_SIZE],
+            pub resp_buf: [u8; Self::_HDR_SIZE + Self::_RESP_SIZE],
         }
 
         impl $name {
             const _HDR_SIZE: usize = <$crate::wire::Header as $crate::__private::Schema>::SCHEMA.max_size()
             .expect("Unable to automatically size buffer. \
                 Header doesn't have a max size.");
-            const _REQ_SIZE: usize = $($segment)::+::info::INTERFACE_INFO.max_request_size
+            const _RQST_SIZE: usize = $($segment)::+::info::INTERFACE_INFO.max_request_size
                 .expect("Unable to automatically size buffer. \
                     One or more request types don't have a max size.");
             const _RESP_SIZE: usize = $($segment)::+::info::INTERFACE_INFO.max_response_size
@@ -391,16 +404,19 @@ macro_rules! autobuffer {
 
             pub const fn new() -> Self {
                 Self {
-                    inc: [0u8; Self::_HDR_SIZE + Self::_REQ_SIZE],
-                    out: [0u8; Self::_HDR_SIZE + Self::_RESP_SIZE],
+                    rqst_buf: [0u8; Self::_HDR_SIZE + Self::_RQST_SIZE],
+                    resp_buf: [0u8; Self::_HDR_SIZE + Self::_RESP_SIZE],
                 }
             }
         }
 
+        // TODO: this only implements a client storage trait, do we want to use
+        // this for some kind of server buffer too?
+
         impl $crate::client::Storage for $name {
-            fn buffers(&mut self) -> (&mut [u8], &mut [u8]) {
-                let Self { inc, out } = self;
-                (inc, out)
+            fn buffers(&mut self) -> $crate::client::StorageView<'_> {
+                let Self { rqst_buf, resp_buf } = self;
+                $crate::client::StorageView { rqst_buf, resp_buf }
             }
         }
     };

@@ -9,11 +9,18 @@ use serde::{Deserialize, Serialize};
 use crate::wire::{Header, Method};
 use crate::{Error, Response};
 
-pub trait Storage {
-    // TODO: do we want this to be postcard-core flavors?
-    fn buffers(&mut self) -> (&mut [u8], &mut [u8]);
+pub struct StorageView<'a> {
+    pub rqst_buf: &'a mut [u8],
+    pub resp_buf: &'a mut [u8],
 }
 
+pub trait Storage {
+    // TODO: do we want this to be postcard-core flavors?
+    fn buffers(&mut self) -> StorageView<'_>;
+}
+
+// TODO: "Interface" is an overloaded term. Maybe call this "Wire" or something
+// that gets across that this is the "I/O" portion of the backend.
 pub trait Interface {
     fn send_reply_raw<'a>(
         &mut self,
@@ -22,6 +29,9 @@ pub trait Interface {
     ) -> Result<&'a [u8], Error>;
 }
 
+// TODO: "Backend" isn't a very meaningful name. Come up with a name that better
+// gets across that this contains room for ser/de as well as the I/O portion of
+// the work.
 pub trait Backend {
     type Storage: Storage;
     type Interface: Interface;
@@ -33,8 +43,8 @@ pub trait Backend {
         R: Deserialize<'de> + 'de,
     {
         let seqno = self.next_sequence_number();
-        let (sto, intfc) = self.parts();
-        let (out, inc) = sto.buffers();
+        let (storage, interface) = self.parts();
+        let StorageView { rqst_buf, resp_buf } = storage.buffers();
 
         // SERIALIZE OUTGOING...
         let hdrout = Header {
@@ -44,7 +54,7 @@ pub trait Backend {
             key,
         };
         let mut out = Serializer {
-            output: SerSlice::new(out),
+            output: SerSlice::new(rqst_buf),
         };
         hdrout.serialize(&mut out).map_err(Error::PostcardSer)?;
         req.serialize(&mut out).map_err(Error::PostcardSer)?;
@@ -54,18 +64,20 @@ pub trait Backend {
         let used = out.output.finalize().map_err(Error::PostcardSer)?;
 
         // DESERIALIZE INCOMING
-        let recvd = intfc.send_reply_raw(used, inc)?;
+        let recvd = interface.send_reply_raw(used, resp_buf)?;
         let mut inc = Deserializer::from_flavor(DeSlice::new(recvd));
         let hdrin = Header::deserialize(&mut inc).map_err(Error::PostcardDeser)?;
 
+        // Check that response header matches all the qualities that we
+        // expect...
+        if hdrin.version != hdrout.version {
+            return Err(Error::VersionMismatch);
+        }
         if hdrin.seqno != hdrout.seqno {
             return Err(Error::BadSeqno);
         }
         if hdrin.method != Method::Response {
             return Err(Error::BadMethod);
-        }
-        if hdrin.version != hdrout.version {
-            return Err(Error::VersionMismatch);
         }
         if hdrin.key != hdrout.key {
             return Err(Error::KeyMismatch);
