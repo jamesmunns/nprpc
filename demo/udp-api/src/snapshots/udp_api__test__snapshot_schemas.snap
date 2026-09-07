@@ -1,0 +1,42 @@
+---
+source: demo/udp-api/src/lib.rs
+expression: "crate::composite::info::INTERFACE_INFO"
+---
+InterfaceInfo {
+    max_request_size: Some(
+        33,
+    ),
+    max_response_size: Some(
+        34,
+    ),
+    endpoints: [
+        EndpointInfo {
+            name: "hello/loopback",
+            key: Key(15 159 180 17 123 11 255 126 ),
+            req_schema: U32,
+            resp_schema: U32,
+        },
+        EndpointInfo {
+            name: "kv/set_name",
+            key: Key(42 224 91 106 138 210 76 96 ),
+            req_schema: String {
+                max_len: Some(
+                    32,
+                ),
+            },
+            resp_schema: Unit,
+        },
+        EndpointInfo {
+            name: "kv/get_name",
+            key: Key(205 87 227 57 108 217 101 192 ),
+            req_schema: Unit,
+            resp_schema: Option(
+                String {
+                    max_len: Some(
+                        32,
+                    ),
+                },
+            ),
+        },
+    ],
+}

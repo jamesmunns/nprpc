@@ -29,3 +29,15 @@ compose_interfaces! {
         crate::kv,
     ]
 }
+
+// TODO: We could make this a builtin part of nprpc? But it's also pretty easy
+// to opt-in to, so maybe we keep it more as a "recipe" than a built-in.
+#[cfg(test)]
+mod test {
+    use insta::assert_debug_snapshot;
+
+    #[test]
+    fn snapshot_schemas() {
+        assert_debug_snapshot!(crate::composite::info::INTERFACE_INFO);
+    }
+}
