@@ -164,7 +164,11 @@ autobuffer!(BorrowBuf, borrow);
 mod test {
     use std::ops::Deref;
 
-    use nprpc::{Backend, Error, Header, Interface, Method, autobuffer};
+    use nprpc::{
+        Error, autobuffer,
+        client::{Backend, Interface},
+        wire::{Header, Method},
+    };
     use postcard_schema_ng::key::Key;
 
     use crate::basic::Client;
