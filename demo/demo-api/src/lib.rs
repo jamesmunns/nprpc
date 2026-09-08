@@ -165,7 +165,7 @@ mod test {
     use std::ops::Deref;
 
     use nprpc::{
-        Error, RequestRaw, autobuffer,
+        ClientInterfaceError, RequestRaw, ServerError, autobuffer,
         io::client::{Backend, Interface},
         wire::{Header, Method},
     };
@@ -180,14 +180,20 @@ mod test {
 
     struct ServerInterface {
         #[allow(clippy::type_complexity)]
-        inner: Box<dyn for<'a> FnMut(RequestRaw<'_>, &'a mut [u8]) -> Result<&'a [u8], Error>>,
+        inner: Box<
+            dyn for<'a> FnMut(
+                RequestRaw<'_>,
+                &'a mut [u8],
+            ) -> Result<&'a [u8], ClientInterfaceError<ServerError>>,
+        >,
     }
     impl Interface for ServerInterface {
+        type Error = ServerError;
         fn send_reply_raw<'a>(
             &mut self,
             outgoing: &[u8],
             incoming: &'a mut [u8],
-        ) -> Result<&'a [u8], Error> {
+        ) -> Result<&'a [u8], ClientInterfaceError<Self::Error>> {
             println!("=> {:?}", outgoing);
             let (hdr, remain) = postcard::take_from_bytes::<Header>(outgoing).unwrap();
             println!("-> {:?}", hdr.key);
@@ -208,7 +214,13 @@ mod test {
         /// the responses back out
         #[allow(clippy::type_complexity)]
         pub fn new(
-            hdlr: Box<dyn for<'a> FnMut(RequestRaw<'_>, &'a mut [u8]) -> Result<&'a [u8], Error>>,
+            hdlr: Box<
+                dyn for<'a> FnMut(
+                    RequestRaw<'_>,
+                    &'a mut [u8],
+                )
+                    -> Result<&'a [u8], ClientInterfaceError<ServerError>>,
+            >,
         ) -> Self {
             TestClient {
                 buf: CompBuffers::new(),
@@ -238,7 +250,9 @@ mod test {
     pub fn exercise_manual() {
         let mut x = ServerImpl;
         let mut cli = TestClient::new(Box::new(move |raw, out| {
-            <ServerImpl as composite::Server>::process_one(&mut x, raw, out)
+            // TODO: if the server errors here, we should reserialize the error
+            // and put that back into `out`
+            Ok(<ServerImpl as composite::Server>::process_one(&mut x, raw, out).unwrap())
         }));
 
         let res = cli
@@ -257,7 +271,7 @@ mod test {
         // just shuttles responses into and out of it (instead of transiting over
         // a wire).
         let mut cli = TestClient::new(Box::new(move |raw, out| {
-            <ServerImpl as composite::Server>::process_one(&mut x, raw, out)
+            Ok(<ServerImpl as composite::Server>::process_one(&mut x, raw, out).unwrap())
         }));
 
         let res = cli.mult_two(&200).unwrap();
@@ -275,7 +289,7 @@ mod test {
     pub fn exercise_borrowed() {
         let mut x = ServerImpl;
         let mut cli = TestClient::new(Box::new(move |raw, out| {
-            <ServerImpl as composite::Server>::process_one(&mut x, raw, out)
+            Ok(<ServerImpl as composite::Server>::process_one(&mut x, raw, out).unwrap())
         }));
 
         let res = cli

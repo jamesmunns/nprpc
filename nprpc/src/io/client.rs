@@ -1,3 +1,4 @@
+use core::fmt::Debug;
 use postcard::{
     Deserializer, Serializer,
     de_flavors::Slice as DeSlice,
@@ -7,21 +8,45 @@ use postcard_schema_ng::key::Key;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Error, Response,
+    Response,
     io::{Storage, StorageView},
     wire::{Header, Method},
 };
 
+#[derive(Debug, PartialEq)]
+pub enum ClientInterfaceError<E> {
+    Client(ClientError),
+    Interface(E),
+}
+
+#[derive(Debug, PartialEq)]
+pub enum ClientError {
+    RequestSerialize(postcard::Error),
+    ResponseHeaderDeserialize(postcard::Error),
+    ResponseBodyDeserialize(postcard::Error),
+    ResponseVersionMismatch,
+    ResponseBadMethod,
+    ResponseBadSeqno,
+    ResponseKeyMismatch,
+}
+
+impl<E> From<ClientError> for ClientInterfaceError<E> {
+    fn from(value: ClientError) -> Self {
+        Self::Client(value)
+    }
+}
+
 // TODO: "Interface" is an overloaded term. Maybe call this "Wire" or something
 // that gets across that this is the "I/O" portion of the backend.
 pub trait Interface {
+    type Error: Debug;
     // TODO: "send reply" is a bad name, we want something that gets across
     // that we are sending a request, then waiting for a reply
     fn send_reply_raw<'a>(
         &mut self,
         outgoing: &[u8],
         incoming: &'a mut [u8],
-    ) -> Result<&'a [u8], Error>;
+    ) -> Result<&'a [u8], ClientInterfaceError<Self::Error>>;
 }
 
 // TODO: "Backend" isn't a very meaningful name. Come up with a name that better
@@ -35,7 +60,11 @@ pub trait Backend {
 
     // TODO: "send reply" is a bad name, we want something that gets across
     // that we are sending a request, then waiting for a reply
-    fn send_reply<'de, Q, R>(&'de mut self, key: Key, req: &Q) -> Result<Response<R>, Error>
+    fn send_reply<'de, Q, R>(
+        &'de mut self,
+        key: Key,
+        req: &Q,
+    ) -> Result<Response<R>, ClientInterfaceError<<Self::Interface as Interface>::Error>>
     where
         Q: Serialize,
         R: Deserialize<'de> + 'de,
@@ -54,40 +83,49 @@ pub trait Backend {
         let mut out = Serializer {
             output: SerSlice::new(rqst_buf),
         };
-        hdrout.serialize(&mut out).map_err(Error::PostcardSer)?;
-        req.serialize(&mut out).map_err(Error::PostcardSer)?;
+        hdrout
+            .serialize(&mut out)
+            .map_err(ClientError::RequestSerialize)?;
+        req.serialize(&mut out)
+            .map_err(ClientError::RequestSerialize)?;
         // TODO: CRC? Wrapping flavor?
-        let used = out.output.finalize().map_err(Error::PostcardSer)?;
+        let used = out
+            .output
+            .finalize()
+            .map_err(ClientError::RequestSerialize)?;
 
         // Exchange...
         let recvd = interface.send_reply_raw(used, resp_buf)?;
 
         // DESERIALIZE INCOMING
         let mut inc = Deserializer::from_flavor(DeSlice::new(recvd));
-        let hdrin = Header::deserialize(&mut inc).map_err(Error::PostcardDeser)?;
+        let hdrin =
+            Header::deserialize(&mut inc).map_err(ClientError::ResponseHeaderDeserialize)?;
 
         // Check that response header matches all the qualities that we
         // expect...
-        //
+
+        if hdrin.version != hdrout.version {
+            return Err(ClientError::ResponseVersionMismatch.into());
+        }
+        if hdrin.method != Method::Response {
+            return Err(ClientError::ResponseBadMethod.into());
+        }
+
         // TODO: We need to handle the "wildcard" error if there was some kind
         // of fatal wire error where the server wasn't able to decode our
         // data at all, like with a CRC error or header corruption. In this
         // case, the seqno and key may not match at all.
-        if hdrin.version != hdrout.version {
-            return Err(Error::VersionMismatch);
-        }
-        if hdrin.method != Method::Response {
-            return Err(Error::BadMethod);
-        }
+
         if hdrin.seqno != hdrout.seqno {
-            return Err(Error::BadSeqno);
+            return Err(ClientError::ResponseBadSeqno.into());
         }
         if hdrin.key != hdrout.key {
-            return Err(Error::KeyMismatch);
+            return Err(ClientError::ResponseKeyMismatch.into());
         }
 
         // Happy with the header, get the body
-        let body = R::deserialize(&mut inc).map_err(Error::PostcardDeser)?;
+        let body = R::deserialize(&mut inc).map_err(ClientError::ResponseBodyDeserialize)?;
 
         // TODO: Ensure all bytes have been consumed? DeSlice::finalize?
 

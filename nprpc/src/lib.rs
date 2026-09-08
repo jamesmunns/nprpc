@@ -8,6 +8,9 @@ pub mod interface;
 pub mod io;
 pub mod wire;
 
+pub use io::client::{ClientError, ClientInterfaceError};
+pub use io::server::{ServerError, ServerInterfaceError};
+
 // TODO: Should the `Key`s we generate also hash the Header and Error type to
 // ensure complete compatibility? Do we consider this part of the versioning?
 
@@ -38,17 +41,4 @@ pub struct Response<U> {
 pub struct ResponseRaw<'data> {
     pub hdr: wire::Header,
     pub resp: &'data [u8],
-}
-
-#[derive(Debug, PartialEq)]
-pub enum Error {
-    WrongMethod,
-    Unknown,
-    PostcardDeser(postcard::Error),
-    PostcardSer(postcard::Error),
-    BadSeqno,
-    KeyMismatch,
-    BadMethod,
-    VersionMismatch,
-    BadHeader,
 }

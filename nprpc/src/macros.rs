@@ -197,7 +197,7 @@ macro_rules! interface {
                     &mut self,
                     req_raw: RequestRaw<'_>,
                     output: &'buf mut [u8],
-                ) -> Result<&'buf [u8], $crate::Error> {
+                ) -> Result<&'buf [u8], $crate::ServerError> {
                     // This block ensures that there are no key collisions in all endpoints
                     const _: () = assert!(
                         $crate::macros::assert_unique(keys::ALL_KEYS),
@@ -205,10 +205,10 @@ macro_rules! interface {
                     );
 
                     if req_raw.hdr.method != Method::Request {
-                        return Err($crate::Error::WrongMethod);
+                        return Err($crate::ServerError::WrongMethod);
                     }
                     if req_raw.hdr.version != 0 {
-                        return Err($crate::Error::VersionMismatch);
+                        return Err($crate::ServerError::VersionMismatch);
                     }
 
                     // Dispatch based on the received key. We trampoline through a monomorphized
@@ -228,7 +228,7 @@ macro_rules! interface {
                         )*
 
                         // None of the keys matched, return an error.
-                        _ => Err($crate::Error::Unknown),
+                        _ => Err($crate::ServerError::UnknownEndpoint),
                     }
                 }
             }
@@ -243,7 +243,10 @@ macro_rules! interface {
                     $(#[cfg($mthd_cfg)])?
                     #[allow(clippy::ptr_arg)]
                     fn $mthd<'req, 'resp>(&'resp mut self, req: &$req_ty)
-                        -> Result<$crate::Response<$resp_ty>, $crate::Error> {
+                        -> Result<
+                            $crate::Response<$resp_ty>,
+                            $crate::ClientInterfaceError<<Self::Interface as $crate::io::client::Interface>::Error>
+                        > {
                             self.send_reply::<$req_ty, $resp_ty>(
                                 <endpoints::$mthd as $crate::interface::Endpoint>::KEY,
                                 req,
@@ -312,7 +315,7 @@ macro_rules! compose_interfaces {
                     &mut self,
                     req_raw: $crate::RequestRaw<'_>,
                     output: &'buf mut [u8],
-                ) -> Result<&'buf [u8], $crate::Error>;
+                ) -> Result<&'buf [u8], $crate::ServerError>;
             }
 
             // TODO: Remove this blanket impl (or make optional) to allow for
@@ -350,7 +353,7 @@ macro_rules! compose_interfaces {
                     &mut self,
                     req_raw: $crate::RequestRaw<'_>,
                     output: &'buf mut [u8],
-                ) -> Result<&'buf [u8], $crate::Error> {
+                ) -> Result<&'buf [u8], $crate::ServerError> {
                     // Check all the merged keys to make sure that none of the composed
                     // endpoints have a collision
                     const _: () = assert!(
@@ -370,7 +373,7 @@ macro_rules! compose_interfaces {
                         }
                     )*
 
-                    Err($crate::Error::Unknown)
+                    Err($crate::ServerError::UnknownEndpoint)
                 }
             }
         }

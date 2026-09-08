@@ -1,3 +1,4 @@
+use core::fmt::Debug;
 use postcard::{
     Serializer,
     ser_flavors::{Flavor as _, Slice as SerSlice},
@@ -6,7 +7,7 @@ use postcard_schema_ng::key::Key;
 use serde::Serialize;
 
 use crate::{
-    Error, Request, RequestRaw,
+    Request, RequestRaw,
     interface::Endpoint,
     io::{Storage, StorageView},
     wire::{Header, Method},
@@ -16,6 +17,28 @@ pub struct RawInterfaceFrame<'data, T> {
     /// Interface specific metadata, if any
     pub meta: T,
     pub raw: &'data [u8],
+}
+
+#[derive(Debug, PartialEq)]
+pub enum ServerError {
+    WrongMethod,
+    UnknownEndpoint,
+    RequestHeaderDeserialize(postcard::Error),
+    RequestBodyDeserialize(postcard::Error),
+    ResponseSerialize(postcard::Error),
+    VersionMismatch,
+    BadHeader,
+}
+
+pub enum ServerInterfaceError<E> {
+    Server(ServerError),
+    Interface(E),
+}
+
+impl<E> From<ServerError> for ServerInterfaceError<E> {
+    fn from(value: ServerError) -> Self {
+        Self::Server(value)
+    }
 }
 
 // TODO: "Interface" is an overloaded term. Maybe call this "Wire" or something
@@ -28,6 +51,7 @@ pub struct RawInterfaceFrame<'data, T> {
 pub trait Interface {
     /// Metadata, like the peer address for UDP
     type Meta;
+    type Error: Debug;
 
     // TODO: this is for getting a request
     // TODO: do we need some interface specific metadata to capture stuff like
@@ -38,7 +62,7 @@ pub trait Interface {
     fn recv_one_frame_raw<'data>(
         &mut self,
         incoming: &'data mut [u8],
-    ) -> Result<Option<RawInterfaceFrame<'data, Self::Meta>>, Error>;
+    ) -> Result<Option<RawInterfaceFrame<'data, Self::Meta>>, ServerInterfaceError<Self::Error>>;
 
     // TODO: this is for sending a response
     //
@@ -47,7 +71,7 @@ pub trait Interface {
     fn send_one_frame_raw(
         &mut self,
         outgoing: RawInterfaceFrame<'_, Self::Meta>,
-    ) -> Result<(), Error>;
+    ) -> Result<(), ServerInterfaceError<Self::Error>>;
 
     // TODO: this is for sending an error response. This is the wrong error type.
     // this should only return an error if it is fatal, like "connection lost".
@@ -59,9 +83,9 @@ pub trait Interface {
         &mut self,
         meta: Self::Meta,
         hdr: Option<Header>,
-        _err: Error,
+        _err: ServerError,
         resp_buf: &mut [u8],
-    ) -> Result<(), Error> {
+    ) -> Result<(), ServerInterfaceError<Self::Error>> {
         let hdr = if let Some(mut hdr) = hdr {
             // TODO: wire error type? Reserved names?
             hdr.key = Key::for_path::<()>("error");
@@ -79,11 +103,16 @@ pub trait Interface {
         let mut out = Serializer {
             output: SerSlice::new(resp_buf),
         };
-        hdr.serialize(&mut out).map_err(Error::PostcardSer)?;
+        hdr.serialize(&mut out)
+            .map_err(ServerError::ResponseSerialize)?;
         // TODO: Actually serialize `err` here
-        ().serialize(&mut out).map_err(Error::PostcardSer)?;
+        ().serialize(&mut out)
+            .map_err(ServerError::ResponseSerialize)?;
         // TODO: CRC? Wrapping flavor?
-        let used = out.output.finalize().map_err(Error::PostcardSer)?;
+        let used = out
+            .output
+            .finalize()
+            .map_err(ServerError::ResponseSerialize)?;
 
         let frame = RawInterfaceFrame { meta, raw: used };
 
@@ -95,8 +124,8 @@ pub trait Interface {
         &mut self,
         rqst_buf: &mut [u8],
         resp_buf: &mut [u8],
-        func: impl for<'a> FnOnce(RequestRaw<'_>, &'a mut [u8]) -> Result<&'a [u8], Error>,
-    ) -> Result<(), Error> {
+        func: impl for<'a> FnOnce(RequestRaw<'_>, &'a mut [u8]) -> Result<&'a [u8], ServerError>,
+    ) -> Result<(), ServerInterfaceError<Self::Error>> {
         // If we got a fatal wire error, return it with ?
         // If we got no error but no packet, nothing to do
         let Some(frame) = self.recv_one_frame_raw(rqst_buf)? else {
@@ -104,7 +133,7 @@ pub trait Interface {
         };
 
         let Ok((hdr, remain)) = postcard::take_from_bytes::<Header>(frame.raw) else {
-            return self.send_one_error(frame.meta, None, Error::BadHeader, resp_buf);
+            return self.send_one_error(frame.meta, None, ServerError::BadHeader, resp_buf);
         };
 
         // TODO: Should we be checking version and stuff here? process_one does
@@ -134,8 +163,8 @@ pub trait Backend {
     fn parts(&mut self) -> (&mut Self::Storage, &mut Self::Interface);
     fn serve_one(
         &mut self,
-        func: impl for<'a> FnOnce(RequestRaw<'_>, &'a mut [u8]) -> Result<&'a [u8], Error>,
-    ) -> Result<(), Error> {
+        func: impl for<'a> FnOnce(RequestRaw<'_>, &'a mut [u8]) -> Result<&'a [u8], ServerError>,
+    ) -> Result<(), ServerInterfaceError<<Self::Interface as Interface>::Error>> {
         let (sto, intfc) = self.parts();
         let StorageView { rqst_buf, resp_buf } = sto.buffers();
         intfc.serve_one(rqst_buf, resp_buf, func)
@@ -146,11 +175,12 @@ pub fn process_endpoint_request<'req, 'resp, 'out, E: Endpoint>(
     req_raw: RequestRaw<'req>,
     out: &'out mut [u8],
     func: impl FnOnce(Request<E::Request<'req>>) -> E::Response<'resp>,
-) -> Result<&'out [u8], Error> {
+) -> Result<&'out [u8], ServerError> {
     let RequestRaw { mut hdr, rqst } = req_raw;
 
     // Deserialize
-    let body: E::Request<'_> = postcard::from_bytes(rqst).map_err(Error::PostcardDeser)?;
+    let body: E::Request<'_> =
+        postcard::from_bytes(rqst).map_err(ServerError::RequestBodyDeserialize)?;
 
     // TODO: ensure all bytes consumed?
 
@@ -166,8 +196,13 @@ pub fn process_endpoint_request<'req, 'resp, 'out, E: Endpoint>(
         output: SerSlice::new(out),
     };
     hdr.method = Method::Response;
-    hdr.serialize(&mut out).map_err(Error::PostcardSer)?;
-    resp.serialize(&mut out).map_err(Error::PostcardSer)?;
-    let used = out.output.finalize().map_err(Error::PostcardSer)?;
+    hdr.serialize(&mut out)
+        .map_err(ServerError::ResponseSerialize)?;
+    resp.serialize(&mut out)
+        .map_err(ServerError::ResponseSerialize)?;
+    let used = out
+        .output
+        .finalize()
+        .map_err(ServerError::ResponseSerialize)?;
     Ok(used)
 }
