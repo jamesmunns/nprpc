@@ -49,6 +49,7 @@ pub enum ServerError {
 /// Can either be an `Io` error with the underlying I/O (while exchanging
 /// frames), or a `Server` error, if the frame contained invalid or
 /// unexpected data.
+#[derive(Debug, PartialEq)]
 pub enum ServerIoError<E> {
     Server(ServerError),
     Io(E),
