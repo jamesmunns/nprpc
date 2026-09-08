@@ -4,8 +4,8 @@
 
 pub mod macros;
 
-pub mod client;
 pub mod interface;
+pub mod io;
 pub mod wire;
 
 // TODO: Should the `Key`s we generate also hash the Header and Error type to
@@ -25,9 +25,19 @@ pub struct Request<T> {
     pub req: T,
 }
 
+pub struct RequestRaw<'data> {
+    pub hdr: wire::Header,
+    pub rqst: &'data [u8],
+}
+
 pub struct Response<U> {
     pub hdr: wire::Header,
     pub resp: U,
+}
+
+pub struct ResponseRaw<'data> {
+    pub hdr: wire::Header,
+    pub resp: &'data [u8],
 }
 
 #[derive(Debug, PartialEq)]
@@ -40,4 +50,5 @@ pub enum Error {
     KeyMismatch,
     BadMethod,
     VersionMismatch,
+    BadHeader,
 }

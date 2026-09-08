@@ -166,7 +166,7 @@ mod test {
 
     use nprpc::{
         Error, autobuffer,
-        client::{Backend, Interface},
+        io::client::{Backend, Interface},
         wire::{Header, Method},
     };
     use postcard_schema_ng::key::Key;

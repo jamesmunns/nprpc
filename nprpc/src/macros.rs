@@ -116,7 +116,7 @@ macro_rules! interface {
         pub mod $mod_name {
             #[allow(unused_imports)]
             use super::*;
-            use $crate::{client::Backend, wire::Method};
+            use $crate::{io::client::Backend, wire::Method};
 
             /// The `endpoints` module contains metadata about each of the methods
             /// of an interface, and implementations of the `Endpoint` trait.
@@ -413,10 +413,10 @@ macro_rules! autobuffer {
         // TODO: this only implements a client storage trait, do we want to use
         // this for some kind of server buffer too?
 
-        impl $crate::client::Storage for $name {
-            fn buffers(&mut self) -> $crate::client::StorageView<'_> {
+        impl $crate::io::Storage for $name {
+            fn buffers(&mut self) -> $crate::io::StorageView<'_> {
                 let Self { rqst_buf, resp_buf } = self;
-                $crate::client::StorageView { rqst_buf, resp_buf }
+                $crate::io::StorageView { rqst_buf, resp_buf }
             }
         }
     };

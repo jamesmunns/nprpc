@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub enum Method {
     Request,
     Response,
+    ErrorResponse,
 }
 
 // TODO: We might want to manually impl Schema/Serialize/Deserialize for Header,
