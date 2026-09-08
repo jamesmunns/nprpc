@@ -1,9 +1,14 @@
+#![cfg_attr(not(feature = "std"), no_std)]
+
 use nprpc::{compose_interfaces, interface};
 
 /////////////////////////////////////////////////////
 // API types
 /////////////////////////////////////////////////////
-use postcard_schema_ng::max_len::MaxLenString;
+#[cfg(not(feature = "std"))]
+pub use postcard_schema_ng::max_len::MaxLenStr;
+#[cfg(feature = "std")]
+pub use postcard_schema_ng::max_len::MaxLenString;
 
 /////////////////////////////////////////////////////
 // Interface definitions
@@ -17,8 +22,14 @@ interface! {
 
 interface! {
     mod kv {
+        #[cfg(feature = "std")]
         fn set_name(MaxLenString<32>) -> ();
+        #[cfg(not(feature = "std"))]
+        fn set_name(MaxLenStr<'req, 32>) -> ();
+        #[cfg(feature = "std")]
         fn get_name(()) -> Option<MaxLenString<32>>;
+        #[cfg(not(feature = "std"))]
+        fn get_name(()) -> Option<MaxLenStr<'resp, 32>>;
     }
 }
 
