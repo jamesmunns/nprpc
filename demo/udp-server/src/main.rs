@@ -51,12 +51,7 @@ fn main() -> std::io::Result<()> {
 
     loop {
         let res = wire.serve_one(|reqraw, outgoing| {
-            <ServerImpl as composite::Server>::process_one(
-                &mut server,
-                reqraw.hdr,
-                reqraw.rqst,
-                outgoing,
-            )
+            <ServerImpl as composite::Server>::process_one(&mut server, reqraw, outgoing)
         });
         if let Err(e) = res {
             println!("Err: {e:?}");
