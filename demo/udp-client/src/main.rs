@@ -1,7 +1,7 @@
 use std::{net::UdpSocket, num::Wrapping, time::Duration};
 
 use nprpc::{
-    autobuffer,
+    ClientInterfaceError, autobuffer,
     io::{
         Storage,
         client::{Backend, Interface},
@@ -56,10 +56,14 @@ impl Interface for ConnectedUdpSocket {
         &mut self,
         outgoing: &[u8],
         incoming: &'a mut [u8],
-    ) -> Result<&'a [u8], nprpc::ClientInterfaceError<Self::Error>> {
-        // TODO: these needs some kind of interface-specific error type
-        self.0.send(outgoing).unwrap();
-        let used = self.0.recv(incoming).unwrap();
+    ) -> Result<&'a [u8], ClientInterfaceError<Self::Error>> {
+        self.0
+            .send(outgoing)
+            .map_err(ClientInterfaceError::Interface)?;
+        let used = self
+            .0
+            .recv(incoming)
+            .map_err(ClientInterfaceError::Interface)?;
         Ok(&incoming[..used])
     }
 }
