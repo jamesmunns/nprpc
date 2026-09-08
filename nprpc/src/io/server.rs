@@ -30,6 +30,7 @@ pub enum ServerError {
     BadHeader,
 }
 
+#[derive(Debug, PartialEq)]
 pub enum ServerInterfaceError<E> {
     Server(ServerError),
     Interface(E),
@@ -119,7 +120,6 @@ pub trait Interface {
         self.send_one_frame_raw(frame)
     }
 
-    // TODO this should return some kind of Fatal error not the regular Error type
     fn serve_one(
         &mut self,
         rqst_buf: &mut [u8],

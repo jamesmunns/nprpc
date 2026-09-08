@@ -1,7 +1,7 @@
 use std::net::{SocketAddr, UdpSocket};
 
 use nprpc::{
-    autobuffer,
+    ServerInterfaceError, autobuffer,
     io::{
         Storage,
         server::{Backend, RawInterfaceFrame},
@@ -71,16 +71,18 @@ struct Wire<S: Storage> {
 
 struct BoundUdpSocket(UdpSocket);
 impl nprpc::io::server::Interface for BoundUdpSocket {
+    type Error = std::io::Error;
     type Meta = SocketAddr;
 
     fn recv_one_frame_raw<'data>(
         &mut self,
         incoming: &'data mut [u8],
-    ) -> Result<Option<RawInterfaceFrame<'data, Self::Meta>>, nprpc::Error> {
-        let Ok((got, peer)) = self.0.recv_from(incoming) else {
-            println!("Uhh (connect)...");
-            return Ok(None);
-        };
+    ) -> Result<Option<RawInterfaceFrame<'data, Self::Meta>>, ServerInterfaceError<Self::Error>>
+    {
+        let (got, peer) = self
+            .0
+            .recv_from(incoming)
+            .map_err(ServerInterfaceError::Interface)?;
         let used = &incoming[..got];
         println!("==(RECV)=> {} ({:02X?})", got, used);
         Ok(Some(RawInterfaceFrame {
@@ -92,12 +94,14 @@ impl nprpc::io::server::Interface for BoundUdpSocket {
     fn send_one_frame_raw(
         &mut self,
         outgoing: RawInterfaceFrame<'_, Self::Meta>,
-    ) -> Result<(), nprpc::Error> {
+    ) -> Result<(), ServerInterfaceError<Self::Error>> {
         // If sending fails oh well, todo maybe log?
         println!("<=(SEND)== {} ({:02X?})", outgoing.raw.len(), outgoing.raw);
         println!();
-        let _ = self.0.send_to(outgoing.raw, outgoing.meta);
-        Ok(())
+        self.0
+            .send_to(outgoing.raw, outgoing.meta)
+            .map(drop)
+            .map_err(ServerInterfaceError::Interface)
     }
 }
 

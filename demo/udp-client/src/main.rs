@@ -51,11 +51,12 @@ fn main() {
 struct ConnectedUdpSocket(UdpSocket);
 
 impl Interface for ConnectedUdpSocket {
+    type Error = std::io::Error;
     fn send_reply_raw<'a>(
         &mut self,
         outgoing: &[u8],
         incoming: &'a mut [u8],
-    ) -> Result<&'a [u8], nprpc::Error> {
+    ) -> Result<&'a [u8], nprpc::ClientInterfaceError<Self::Error>> {
         // TODO: these needs some kind of interface-specific error type
         self.0.send(outgoing).unwrap();
         let used = self.0.recv(incoming).unwrap();
