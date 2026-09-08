@@ -6,17 +6,11 @@ use postcard_schema_ng::key::Key;
 use serde::Serialize;
 
 use crate::{
-    Error, RequestRaw,
+    Error, Request, RequestRaw,
+    interface::Endpoint,
     io::{Storage, StorageView},
     wire::{Header, Method},
 };
-
-// fn process<'req, 'resp, 'out>(
-//     mut hdr: wire::Header,
-//     body: &'req [u8],
-//     out: &'out mut [u8],
-//     func: impl FnOnce(Request<Self::Request<'req>>) -> Self::Response<'resp>,
-// ) -> Result<&'out [u8], Error> {
 
 pub struct RawInterfaceFrame<'data, T> {
     /// Interface specific metadata, if any
@@ -146,4 +140,34 @@ pub trait Backend {
         let StorageView { rqst_buf, resp_buf } = sto.buffers();
         intfc.serve_one(rqst_buf, resp_buf, func)
     }
+}
+
+pub fn process_endpoint_request<'req, 'resp, 'out, E: Endpoint>(
+    req_raw: RequestRaw<'req>,
+    out: &'out mut [u8],
+    func: impl FnOnce(Request<E::Request<'req>>) -> E::Response<'resp>,
+) -> Result<&'out [u8], Error> {
+    let RequestRaw { mut hdr, rqst } = req_raw;
+
+    // Deserialize
+    let body: E::Request<'_> = postcard::from_bytes(rqst).map_err(Error::PostcardDeser)?;
+
+    // TODO: ensure all bytes consumed?
+
+    // Process request
+    // TODO: Pass hdr + req by reference? Probably no need to copy/move.
+    let req = Request {
+        hdr: hdr.clone(),
+        req: body,
+    };
+    let resp = func(req);
+    // Serialize response
+    let mut out = Serializer {
+        output: SerSlice::new(out),
+    };
+    hdr.method = Method::Response;
+    hdr.serialize(&mut out).map_err(Error::PostcardSer)?;
+    resp.serialize(&mut out).map_err(Error::PostcardSer)?;
+    let used = out.output.finalize().map_err(Error::PostcardSer)?;
+    Ok(used)
 }

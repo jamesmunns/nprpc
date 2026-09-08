@@ -1,11 +1,5 @@
-use postcard::{
-    Serializer,
-    ser_flavors::{Flavor as _, Slice as SerSlice},
-};
 use postcard_schema_ng::{Schema, key::Key, schema::DataModelType};
 use serde::{Deserialize, Serialize};
-
-use crate::{Error, Request, wire};
 
 pub trait Endpoint {
     type Request<'req>: Schema + Deserialize<'req>;
@@ -22,35 +16,6 @@ pub trait Endpoint {
         req_schema: <Self::Request<'static> as Schema>::SCHEMA,
         resp_schema: <Self::Response<'static> as Schema>::SCHEMA,
     };
-
-    fn process<'req, 'resp, 'out>(
-        mut hdr: wire::Header,
-        body: &'req [u8],
-        out: &'out mut [u8],
-        func: impl FnOnce(Request<Self::Request<'req>>) -> Self::Response<'resp>,
-    ) -> Result<&'out [u8], Error> {
-        // Deserialize
-        let body: Self::Request<'_> = postcard::from_bytes(body).map_err(Error::PostcardDeser)?;
-
-        // TODO: ensure all bytes consumed?
-
-        // Process request
-        // TODO: Pass hdr + req by reference? Probably no need to copy/move.
-        let req = Request {
-            hdr: hdr.clone(),
-            req: body,
-        };
-        let resp = func(req);
-        // Serialize response
-        let mut out = Serializer {
-            output: SerSlice::new(out),
-        };
-        hdr.method = wire::Method::Response;
-        hdr.serialize(&mut out).map_err(Error::PostcardSer)?;
-        resp.serialize(&mut out).map_err(Error::PostcardSer)?;
-        let used = out.output.finalize().map_err(Error::PostcardSer)?;
-        Ok(used)
-    }
 }
 
 #[derive(Debug, Clone, Copy)]

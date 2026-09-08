@@ -116,7 +116,7 @@ macro_rules! interface {
         pub mod $mod_name {
             #[allow(unused_imports)]
             use super::*;
-            use $crate::{io::client::Backend, wire::Method};
+            use $crate::{io::client::Backend, wire::Method, RequestRaw};
 
             /// The `endpoints` module contains metadata about each of the methods
             /// of an interface, and implementations of the `Endpoint` trait.
@@ -195,8 +195,7 @@ macro_rules! interface {
                 /// Err(Unknown) if the key didn't match.
                 fn process_one<'buf>(
                     &mut self,
-                    hdr: $crate::wire::Header,
-                    body: &[u8],
+                    req_raw: RequestRaw<'_>,
                     output: &'buf mut [u8],
                 ) -> Result<&'buf [u8], $crate::Error> {
                     // This block ensures that there are no key collisions in all endpoints
@@ -205,10 +204,10 @@ macro_rules! interface {
                         concat!("key collision in interface `", stringify!($mod_name), "`"),
                     );
 
-                    if hdr.method != Method::Request {
+                    if req_raw.hdr.method != Method::Request {
                         return Err($crate::Error::WrongMethod);
                     }
-                    if hdr.version != 0 {
+                    if req_raw.hdr.version != 0 {
                         return Err($crate::Error::VersionMismatch);
                     }
 
@@ -216,13 +215,12 @@ macro_rules! interface {
                     // version of the `process` function, which handles the common deserialize,
                     // call, serialize portion of the code. This is stamped out on a per-endpoint
                     // basis.
-                    match hdr.key {
+                    match req_raw.hdr.key {
                         $(
                             $(#[cfg($mthd_cfg)])?
                             <endpoints::$mthd as $crate::interface::Endpoint>::KEY => {
-                                <endpoints::$mthd as $crate::interface::Endpoint>::process(
-                                    hdr,
-                                    body,
+                                $crate::io::server::process_endpoint_request::<endpoints::$mthd>(
+                                    req_raw,
                                     output,
                                     |req| <Self as Server>::$mthd(self, req)
                                 )
@@ -312,8 +310,7 @@ macro_rules! compose_interfaces {
             pub trait Server {
                 fn process_one<'buf>(
                     &mut self,
-                    hdr: $crate::wire::Header,
-                    body: &[u8],
+                    req_raw: $crate::RequestRaw<'_>,
                     output: &'buf mut [u8],
                 ) -> Result<&'buf [u8], $crate::Error>;
             }
@@ -351,8 +348,7 @@ macro_rules! compose_interfaces {
             {
                 fn process_one<'buf>(
                     &mut self,
-                    hdr: $crate::wire::Header,
-                    body: &[u8],
+                    req_raw: $crate::RequestRaw<'_>,
                     output: &'buf mut [u8],
                 ) -> Result<&'buf [u8], $crate::Error> {
                     // Check all the merged keys to make sure that none of the composed
@@ -369,8 +365,8 @@ macro_rules! compose_interfaces {
                         // exhausted all outcomes.
                         //
                         // TODO: j/k, that causes borrow errors?
-                        if $($segment)::+::keys::ALL_KEYS.contains(&hdr.key) {
-                            return <Self as $($segment)::+::Server>::process_one(self, hdr, body, output);
+                        if $($segment)::+::keys::ALL_KEYS.contains(&req_raw.hdr.key) {
+                            return <Self as $($segment)::+::Server>::process_one(self, req_raw, output);
                         }
                     )*
 

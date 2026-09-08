@@ -165,7 +165,7 @@ mod test {
     use std::ops::Deref;
 
     use nprpc::{
-        Error, autobuffer,
+        Error, RequestRaw, autobuffer,
         io::client::{Backend, Interface},
         wire::{Header, Method},
     };
@@ -237,7 +237,11 @@ mod test {
     pub fn exercise_manual() {
         let mut x = ServerImpl;
         let mut cli = TestClient::new(Box::new(move |hdr, inc, out| {
-            <ServerImpl as composite::Server>::process_one(&mut x, hdr.clone(), inc, out)
+            let raw = RequestRaw {
+                hdr: hdr.clone(),
+                rqst: inc,
+            };
+            <ServerImpl as composite::Server>::process_one(&mut x, raw, out)
         }));
 
         let res = cli
@@ -256,7 +260,11 @@ mod test {
         // just shuttles responses into and out of it (instead of transiting over
         // a wire).
         let mut cli = TestClient::new(Box::new(move |hdr, inc, out| {
-            <ServerImpl as composite::Server>::process_one(&mut x, hdr.clone(), inc, out)
+            let raw = RequestRaw {
+                hdr: hdr.clone(),
+                rqst: inc,
+            };
+            <ServerImpl as composite::Server>::process_one(&mut x, raw, out)
         }));
 
         let res = cli.mult_two(&200).unwrap();
@@ -274,7 +282,11 @@ mod test {
     pub fn exercise_borrowed() {
         let mut x = ServerImpl;
         let mut cli = TestClient::new(Box::new(move |hdr, inc, out| {
-            <ServerImpl as composite::Server>::process_one(&mut x, hdr.clone(), inc, out)
+            let raw = RequestRaw {
+                hdr: hdr.clone(),
+                rqst: inc,
+            };
+            <ServerImpl as composite::Server>::process_one(&mut x, raw, out)
         }));
 
         let res = cli
