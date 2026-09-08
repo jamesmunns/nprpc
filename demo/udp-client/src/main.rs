@@ -2,7 +2,7 @@ use std::{net::UdpSocket, num::Wrapping, time::Duration};
 
 use nprpc::{
     autobuffer,
-    client::{Backend, Interface},
+    io::client::{Backend, Interface},
 };
 
 // TODO: compose clients
