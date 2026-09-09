@@ -45,22 +45,17 @@ pub mod __private {
     pub use serde::{Deserialize, Serialize};
 }
 
-pub struct Request<T> {
-    pub hedr: wire::Header,
-    pub body: T,
+pub struct Request<'rqst, T> {
+    pub hedr: &'rqst wire::Header,
+    pub body: &'rqst T,
 }
 
 pub struct RequestRaw<'rqst> {
-    pub hedr: wire::Header,
+    pub hedr: &'rqst wire::Header,
     pub body: &'rqst [u8],
 }
 
 pub struct Response<U> {
     pub hedr: wire::Header,
     pub body: U,
-}
-
-pub struct ResponseRaw<'resp> {
-    pub hedr: wire::Header,
-    pub body: &'resp [u8],
 }

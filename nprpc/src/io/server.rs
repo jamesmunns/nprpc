@@ -166,7 +166,7 @@ pub fn serve_one_with_dispatcher<B: Backend>(
     }
 
     let rqst_raw = RequestRaw {
-        hedr: hedr.clone(),
+        hedr: &hedr,
         body: remain,
     };
 
@@ -180,12 +180,21 @@ pub fn serve_one_with_dispatcher<B: Backend>(
     }
 }
 
-pub fn process_endpoint_request<'rqst, 'resp, 'out, E: Endpoint>(
+pub fn process_endpoint_request<'rqst, 'resp, 'out, E: Endpoint, F>(
     rqst_raw: RequestRaw<'rqst>,
     out: &'out mut [u8],
-    func: impl FnOnce(Request<E::Request<'rqst>>) -> E::Response<'resp>,
-) -> Result<&'out [u8], ServerError> {
-    let RequestRaw { mut hedr, body } = rqst_raw;
+    func: F,
+) -> Result<&'out [u8], ServerError>
+where
+    // The 'here lifetime encodes the lifetime of the borrow of the deserialized
+    // request body. The body may contain borrows of the incoming request
+    // buffer, basically `&'here Request<'rqst>` is passed to the dispatcher.
+    //
+    // This is a hrtb lifetime because we choose the lifetime inside of this
+    // function, rather than based on something passed in like 'rqst or 'resp.
+    F: for<'here> FnOnce(Request<'here, E::Request<'rqst>>) -> E::Response<'resp>,
+{
+    let RequestRaw { hedr, body } = rqst_raw;
 
     // Deserialize
     let body: E::Request<'_> =
@@ -194,17 +203,21 @@ pub fn process_endpoint_request<'rqst, 'resp, 'out, E: Endpoint>(
     // TODO: ensure all bytes consumed?
 
     // Process request
-    // TODO: Pass hedr + rqst by reference? Probably no need to copy/move.
-    let rqst = Request {
-        hedr: hedr.clone(),
-        body,
-    };
+    //
+    // This is where the `'here` lifetime starts, with this borrow of the
+    // deserialized request body.
+    let rqst = Request { hedr, body: &body };
     let resp = func(rqst);
+    // The `'here` lifetime could end here.
+
     // Serialize response
     let mut out = Serializer {
         output: SerSlice::new(out),
     };
-    hedr.method = Method::Response;
+    let hedr = Header {
+        method: Method::Response,
+        ..*hedr
+    };
     hedr.serialize(&mut out)
         .map_err(ServerError::ResponseSerialize)?;
     resp.serialize(&mut out)

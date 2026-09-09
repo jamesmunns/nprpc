@@ -193,11 +193,11 @@ macro_rules! interface {
                 /// This method is the prime dispatcher. It takes a processed header and raw body,
                 /// and dispatches it to a method if there is a matching one, otherwise returning
                 /// Err(Unknown) if the key didn't match.
-                fn dispatch_one<'buf>(
+                fn dispatch_one<'resp>(
                     &mut self,
                     req_raw: RequestRaw<'_>,
-                    output: &'buf mut [u8],
-                ) -> Result<&'buf [u8], $crate::ServerError> {
+                    output: &'resp mut [u8],
+                ) -> Result<&'resp [u8], $crate::ServerError> {
                     // This block ensures that there are no key collisions in all endpoints
                     const _: () = assert!(
                         $crate::macros::assert_unique(keys::ALL_KEYS),
@@ -212,7 +212,7 @@ macro_rules! interface {
                         $(
                             $(#[cfg($mthd_cfg)])?
                             <endpoints::$mthd as $crate::interface::Endpoint>::KEY => {
-                                $crate::io::server::process_endpoint_request::<endpoints::$mthd>(
+                                $crate::io::server::process_endpoint_request::<endpoints::$mthd, _>(
                                     req_raw,
                                     output,
                                     |rqst| <Self as Server>::$mthd(self, rqst)

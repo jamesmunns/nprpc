@@ -101,7 +101,7 @@ impl basic::Server for ServerImpl {
     }
 
     fn to_stringd(&mut self, rqst: Request<MaxLenString<8>>) -> MaxLenString<8> {
-        rqst.body
+        rqst.body.clone()
     }
 
     fn billy(&mut self, rqst: Request<MaxLenString<8>>) -> MaxLenString<8> {
@@ -192,7 +192,7 @@ mod test {
             println!("=> {:?}", outgoing);
             let (hedr, body) = postcard::take_from_bytes::<Header>(outgoing).unwrap();
             println!("-> {:?}", hedr.key);
-            let raw = RequestRaw { hedr, body };
+            let raw = RequestRaw { hedr: &hedr, body };
             (self.inner)(raw, incoming)
         }
     }

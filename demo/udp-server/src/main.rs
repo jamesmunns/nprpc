@@ -19,14 +19,14 @@ struct ServerImpl {
 impl udp_api::hello::Server for ServerImpl {
     fn loopback(&mut self, rqst: nprpc::Request<u32>) -> u32 {
         println!("hello/loopback: {}", rqst.body);
-        rqst.body
+        *rqst.body
     }
 }
 
 impl udp_api::kv::Server for ServerImpl {
     fn set_name(&mut self, rqst: nprpc::Request<MaxLenString<32>>) {
         println!("kv/set_name: {}", rqst.body);
-        self.name = Some(rqst.body);
+        self.name = Some(rqst.body.clone());
     }
 
     fn get_name(&mut self, _req: nprpc::Request<()>) -> Option<MaxLenString<32>> {
