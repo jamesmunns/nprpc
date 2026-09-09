@@ -1,3 +1,5 @@
+//! Client and Server I/O items
+
 pub mod client;
 pub mod server;
 

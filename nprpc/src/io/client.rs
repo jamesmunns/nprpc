@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Response,
-    interface::Endpoint,
+    interface::Method,
     io::{Storage, StorageView},
-    wire::{Header, Method},
+    wire::{Header, Operation},
 };
 
 /// Error with the client
@@ -40,8 +40,8 @@ pub enum ClientError {
     ResponseBodyDeserialize(postcard::Error),
     /// The client and server disagreed on the protocol version
     ResponseVersionMismatch,
-    /// The resposne contained an unexpected Method field.
-    ResponseBadMethod,
+    /// The resposne contained an unexpected Operation field.
+    ResponseBadOperation,
     /// The response contained an unexpected sequence number.
     ResponseBadSeqno,
     /// The response contained an unexpected type tag [`Key`].
@@ -100,9 +100,9 @@ pub trait Backend {
     fn parts(&mut self) -> (&mut Self::Storage, &mut Self::Io);
 
     /// Send a request and then attempt to receive a response for the given
-    /// [`Endpoint`] type `E`, which bundles the request type as `E::Request`,
-    /// the response type as `E::Response`, and the hash of the two schemas
-    /// and path as the associated const `E::KEY`.
+    /// [`Method`] type `M`, which bundles the request type as `M::Request`,
+    /// the response type as `M::Response`, and the hash of the two schemas
+    /// and path as the associated const `M::KEY`.
     ///
     /// This method prepares a header, then serializes an outgoing frame
     /// including the serialized header and body into the buffer provided by
@@ -113,20 +113,20 @@ pub trait Backend {
     ///
     /// Finally, we attempt to deserialize that raw frame into a header and
     /// body, and return the result to the caller.
-    fn send_then_receive_typed_frames<'rqst, 'resp, E: Endpoint>(
+    fn send_then_receive_typed_frames<'rqst, 'resp, M: Method>(
         &'resp mut self,
-        rqst: &E::Request<'rqst>,
-    ) -> Result<Response<E::Response<'resp>>, ClientIoError<<Self::Io as Io>::Error>> {
+        rqst: &M::Request<'rqst>,
+    ) -> Result<Response<M::Response<'resp>>, ClientIoError<<Self::Io as Io>::Error>> {
         let seqno = self.next_sequence_number();
         let (storage, interface) = self.parts();
         let StorageView { rqst_buf, resp_buf } = storage.buffers();
 
         // SERIALIZE OUTGOING...
         let hedr_rqst = Header {
-            method: Method::Request,
+            op: Operation::Request,
             version: 0,
             seqno,
-            key: E::KEY,
+            key: M::KEY,
         };
         let mut out = Serializer {
             output: SerSlice::new(rqst_buf),
@@ -158,8 +158,8 @@ pub trait Backend {
         if hedr_resp.version != hedr_rqst.version {
             return Err(ClientError::ResponseVersionMismatch.into());
         }
-        if hedr_resp.method != Method::Response {
-            return Err(ClientError::ResponseBadMethod.into());
+        if hedr_resp.op != Operation::Response {
+            return Err(ClientError::ResponseBadOperation.into());
         }
 
         // TODO: We need to handle the "wildcard" error if there was some kind
@@ -176,7 +176,7 @@ pub trait Backend {
 
         // Happy with the header, get the body
         let body =
-            E::Response::deserialize(&mut inc).map_err(ClientError::ResponseBodyDeserialize)?;
+            M::Response::deserialize(&mut inc).map_err(ClientError::ResponseBodyDeserialize)?;
 
         // TODO: Ensure all bytes have been consumed? DeSlice::finalize?
 

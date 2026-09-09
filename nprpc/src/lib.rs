@@ -8,7 +8,7 @@
 //!
 //! * Strongly typed (and Rust focused)
 //!     * Uses `postcard-schema` for deriving payload schemas.
-//!     * Messages are tagged with an eight-byte hash of the endpoint name,
+//!     * Messages are tagged with an eight-byte hash of the method name,
 //!       request schema, and response schema. Hash collisions are caught at
 //!       compile time, and Cool Schemas Never Change.
 //!     * Uses `serde` and `postcard` are used for serialization and
@@ -41,7 +41,7 @@
 //! ## Lightning Tour
 //!
 //! We call "a set of remotely callable methods" an "interface". You define
-//! an interface using the `interface!` macro. You usually do this in a shared
+//! an interface using the [`interface!`] macro. You usually do this in a shared
 //! `example-api` crate.
 //!
 //! ```rust
@@ -75,8 +75,23 @@
 //! #     }
 //! # }
 //! use nprpc::Request;
-//! struct ServerImpl;
+//! // From the `example-api` crate above
+//! use example::Server;
 //!
+//! // Not shown: impl Backend for WireBackend { .. }
+//! struct WireBackend {
+//!     // ...
+//! #   a: WireStorage,
+//! #   b: WireIo,
+//! }
+//!
+//! // Server-specific type that contains necessary trait
+//! struct ServerImpl {
+//!     // ...
+//! }
+//! # impl ServerImpl { pub fn new() -> Self { Self {} }}
+//!
+//! // Implementation of `example` defined by `interface!` above
 //! impl example::Server for ServerImpl {
 //!     fn echo(&mut self, req: Request<u32>) -> u32 {
 //!         // `req` contains both the header of the request as well as the
@@ -85,6 +100,50 @@
 //!         *req.body
 //!     }
 //! }
+//!
+//! # struct WireIo;
+//! # struct WireStorage;
+//! # use nprpc::io::server::{ServerIoError, RawIoFrame};
+//! # impl nprpc::io::server::Io for WireIo {
+//! #     type Error = ();
+//! #     type Meta = ();
+//! #     fn recv_one_frame_raw<'data>(&mut self, _: &'data mut [u8])
+//! #         -> Result<Option<RawIoFrame<'data, ()>>, ServerIoError<()>>
+//! #     {
+//! #         Err(nprpc::io::server::ServerIoError::Io(()))
+//! #     }
+//! #     fn send_one_frame_raw(&mut self, _: RawIoFrame<'_, ()>)
+//! #         -> Result<(), ServerIoError<()>> { todo!() }
+//! # }
+//! # impl nprpc::io::Storage for WireStorage {
+//! #     fn buffers(&mut self) -> nprpc::io::StorageView<'_> {
+//! #         nprpc::io::StorageView { rqst_buf: &mut [], resp_buf: &mut [] }
+//! #     }
+//! # }
+//! # impl nprpc::io::server::Backend for WireBackend {
+//! #     type Io = WireIo;
+//! #     type Storage = WireStorage;
+//! #     fn parts(&mut self) -> (&mut WireStorage, &mut WireIo) {
+//! #         let Self { a, b } = self;
+//! #         (a, b)
+//! #     }
+//! # }
+//! #
+//! # impl WireBackend {
+//! #     fn new() -> Self { Self { a: WireStorage, b: WireIo }}
+//! # }
+//! #
+//! fn main() {
+//!     let mut wire = WireBackend::new();
+//!     let mut server = ServerImpl::new();
+//!
+//!     // Server one request, typically done in a loop
+//!     let res = server.serve_one(&mut wire);
+//!     if let Err(e) = res {
+//!         println!("Err: {e:?}");
+//!     }
+//! }
+//!
 //! ```
 //!
 //! As a client, you'll get an extension trait called `Client` that lets you
@@ -183,6 +242,7 @@ pub mod __private {
 /// Borrowed view of a request
 ///
 /// Contains a reference to a request header and request body.
+#[derive(Debug, Clone, Copy)]
 pub struct Request<'rqst, T> {
     pub hedr: &'rqst wire::Header,
     pub body: &'rqst T,
@@ -191,12 +251,14 @@ pub struct Request<'rqst, T> {
 /// Borrowed view of a request
 ///
 /// Like `Request`, but the body has not been deserialized.
+#[derive(Debug, Clone, Copy)]
 pub struct RequestRaw<'rqst> {
     pub hedr: &'rqst wire::Header,
     pub body: &'rqst [u8],
 }
 
 /// Owned view of a response
+#[derive(Debug)]
 pub struct Response<U> {
     pub hedr: wire::Header,
     pub body: U,

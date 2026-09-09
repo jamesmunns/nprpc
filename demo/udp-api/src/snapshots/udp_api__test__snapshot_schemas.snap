@@ -9,14 +9,14 @@ InterfaceInfo {
     max_response_size: Some(
         34,
     ),
-    endpoints: [
-        EndpointInfo {
+    methods: [
+        MethodInfo {
             name: "hello/loopback",
             key: Key(15 159 180 17 123 11 255 126 ),
             req_schema: U32,
             resp_schema: U32,
         },
-        EndpointInfo {
+        MethodInfo {
             name: "kv/set_name",
             key: Key(42 224 91 106 138 210 76 96 ),
             req_schema: String {
@@ -26,7 +26,7 @@ InterfaceInfo {
             },
             resp_schema: Unit,
         },
-        EndpointInfo {
+        MethodInfo {
             name: "kv/get_name",
             key: Key(205 87 227 57 108 217 101 192 ),
             req_schema: Unit,

@@ -1,3 +1,5 @@
+//! Items relevant for server and server operations
+
 use core::fmt::Debug;
 use postcard::{
     Serializer,
@@ -7,9 +9,9 @@ use serde::Serialize;
 
 use crate::{
     Request, RequestRaw,
-    interface::Endpoint,
+    interface::Method,
     io::{Storage, StorageView},
-    wire::{Header, Method, WireError},
+    wire::{Header, Operation, WireError},
 };
 
 /// Raw frame received from or sent to the [`Io`] implementation.
@@ -29,15 +31,15 @@ pub struct RawIoFrame<'data, T> {
 pub enum ServerError {
     /// Received a frame, but failed to deserialize a [`Header`] from the frame.
     RequestHeaderDeserialize(postcard::Error),
-    /// Received a request with an unexpected method field.
-    RequestWrongMethod,
+    /// Received a request with an unexpected operation field.
+    RequestWrongOperation,
     /// Received a request with an unexpected version field.
     RequestVersionMismatch,
-    /// Received a request for an [`Endpoint`]'s [`Key`] that this server is not
+    /// Received a request for a [`Method`]'s [`Key`] that this server is not
     /// capable of handling
     ///
     /// [`Key`]: postcard_schema_ng::key::Key
-    UnknownEndpoint,
+    UnknownMethod,
     /// Received a frame and deserialized the header, but failed to deserialize
     /// the request body.
     RequestBodyDeserialize(postcard::Error),
@@ -110,7 +112,7 @@ pub trait Io {
     ) -> Result<(), ServerIoError<Self::Error>> {
         let hedr = Header {
             version: 0,
-            method: Method::ErrorResponse,
+            op: Operation::ErrorResponse,
             seqno: hedr.map(|h| h.seqno).unwrap_or(0),
             key: WireError::KEY,
         };
@@ -143,6 +145,7 @@ pub trait Backend {
     fn parts(&mut self) -> (&mut Self::Storage, &mut Self::Io);
 }
 
+/// Serve a single response with the given server dispatcher function
 pub fn serve_one_with_dispatcher<B: Backend>(
     backend: &mut B,
     dispatcher: impl for<'a> FnOnce(RequestRaw<'_>, &'a mut [u8]) -> Result<&'a [u8], ServerError>,
@@ -160,8 +163,8 @@ pub fn serve_one_with_dispatcher<B: Backend>(
         return intfc.send_one_error(frame.meta, None, WireError::SERVER_BAD_HEADER, resp_buf);
     };
 
-    if hedr.method != Method::Request {
-        return Err(ServerIoError::Server(ServerError::RequestWrongMethod));
+    if hedr.op != Operation::Request {
+        return Err(ServerIoError::Server(ServerError::RequestWrongOperation));
     }
     if hedr.version != 0 {
         return Err(ServerIoError::Server(ServerError::RequestVersionMismatch));
@@ -182,7 +185,9 @@ pub fn serve_one_with_dispatcher<B: Backend>(
     }
 }
 
-pub fn process_endpoint_request<'rqst, 'resp, 'out, E: Endpoint, F>(
+/// Handles the deserialization + serialization details when the specific method
+/// has been selected to be dispatched to.
+pub fn process_method_request<'rqst, 'resp, 'out, M: Method, F>(
     rqst_raw: RequestRaw<'rqst>,
     out: &'out mut [u8],
     func: F,
@@ -194,12 +199,12 @@ where
     //
     // This is a hrtb lifetime because we choose the lifetime inside of this
     // function, rather than based on something passed in like 'rqst or 'resp.
-    F: for<'here> FnOnce(Request<'here, E::Request<'rqst>>) -> E::Response<'resp>,
+    F: for<'here> FnOnce(Request<'here, M::Request<'rqst>>) -> M::Response<'resp>,
 {
     let RequestRaw { hedr, body } = rqst_raw;
 
     // Deserialize
-    let body: E::Request<'_> =
+    let body: M::Request<'_> =
         postcard::from_bytes(body).map_err(ServerError::RequestBodyDeserialize)?;
 
     // TODO: ensure all bytes consumed?
@@ -217,7 +222,7 @@ where
         output: SerSlice::new(out),
     };
     let hedr = Header {
-        method: Method::Response,
+        op: Operation::Response,
         ..*hedr
     };
     hedr.serialize(&mut out)

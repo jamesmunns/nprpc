@@ -1,7 +1,10 @@
+//! Interface and Interface Methods
+
 use postcard_schema_ng::{Schema, key::Key, schema::DataModelType};
 use serde::{Deserialize, Serialize};
 
-pub trait Endpoint {
+/// A trait containing the metadata of a given method of an method
+pub trait Method {
     type Request<'rqst>: Schema + Serialize + Deserialize<'rqst>;
     type Response<'resp>: Schema + Serialize + Deserialize<'resp>;
 
@@ -10,7 +13,7 @@ pub trait Endpoint {
     const KEY: Key =
         Key::for_2ty_path::<Self::Request<'static>, Self::Response<'static>>(Self::NAME);
 
-    const INFO: EndpointInfo = EndpointInfo {
+    const INFO: MethodInfo = MethodInfo {
         name: Self::NAME,
         key: Self::KEY,
         req_schema: <Self::Request<'static> as Schema>::SCHEMA,
@@ -18,22 +21,27 @@ pub trait Endpoint {
     };
 }
 
+/// A struct containing metadata for a given method of an interface
 #[derive(Debug, Clone, Copy)]
-pub struct EndpointInfo {
+pub struct MethodInfo {
     pub name: &'static str,
     pub key: Key,
     pub req_schema: &'static DataModelType,
     pub resp_schema: &'static DataModelType,
 }
 
+/// A struct containing metadata for a given interface
 #[derive(Debug, Clone, Copy)]
 pub struct InterfaceInfo {
     pub max_request_size: Option<usize>,
     pub max_response_size: Option<usize>,
-    pub endpoints: &'static [EndpointInfo],
+    pub methods: &'static [MethodInfo],
 }
 
-pub const fn req_body_max_buf_required(infos: &[EndpointInfo]) -> Option<usize> {
+/// Calculated the largest request body payload in bytes.
+///
+/// Returns `None` if one or more request type is unbounded.
+pub const fn rqst_body_max_buf_required(infos: &[MethodInfo]) -> Option<usize> {
     // Ensure that buffers have AT LEAST enough for the WireError type
     let mut max = crate::wire::WireError::SCHEMA.max_size().unwrap();
     let mut idx = 0;
@@ -49,7 +57,10 @@ pub const fn req_body_max_buf_required(infos: &[EndpointInfo]) -> Option<usize> 
     Some(max)
 }
 
-pub const fn resp_body_max_buf_required(infos: &[EndpointInfo]) -> Option<usize> {
+/// Calculated the largest response body payload in bytes.
+///
+/// Returns `None` if one or more response type is unbounded.
+pub const fn resp_body_max_buf_required(infos: &[MethodInfo]) -> Option<usize> {
     // Ensure that buffers have AT LEAST enough for the WireError type
     let mut max = crate::wire::WireError::SCHEMA.max_size().unwrap();
     let mut idx = 0;
@@ -65,7 +76,9 @@ pub const fn resp_body_max_buf_required(infos: &[EndpointInfo]) -> Option<usize>
     Some(max)
 }
 
-pub const fn total_len(sets: &[&[EndpointInfo]]) -> usize {
+/// Calculates the total number of `MethodInfo`s in an array of array of
+/// `MethodInfo`s.
+pub const fn total_len(sets: &[&[MethodInfo]]) -> usize {
     let mut i = 0;
     let mut ct = 0;
     while i < sets.len() {
@@ -75,8 +88,11 @@ pub const fn total_len(sets: &[&[EndpointInfo]]) -> usize {
     ct
 }
 
-pub const fn flatten<const N: usize>(sets: &[&[EndpointInfo]]) -> [EndpointInfo; N] {
-    pub const ONE: EndpointInfo = EndpointInfo {
+/// Flattens an array of array of `MethodInfo`s into a flat array of `MethodInfo`s.
+///
+/// N should be the total length of `sets`, calculated by [`total_len()`].
+pub const fn flatten<const N: usize>(sets: &[&[MethodInfo]]) -> [MethodInfo; N] {
+    pub const ONE: MethodInfo = MethodInfo {
         name: "",
         key: Key::from_bytes([0; 8]),
         req_schema: &DataModelType::Unit,
@@ -99,7 +115,10 @@ pub const fn flatten<const N: usize>(sets: &[&[EndpointInfo]]) -> [EndpointInfo;
     out
 }
 
-pub const fn extract_keys<const N: usize>(infos: &[EndpointInfo]) -> [Key; N] {
+/// Create an array of [`Key`]s from an array of [`MethodInfo`]s.
+///
+/// N must equal `infos.len()`.
+pub const fn extract_keys<const N: usize>(infos: &[MethodInfo]) -> [Key; N] {
     assert!(N == infos.len());
     let mut buf = [Key::from_bytes([0u8; 8]); N];
     let mut idx = 0;

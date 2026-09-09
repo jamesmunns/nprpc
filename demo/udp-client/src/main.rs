@@ -8,7 +8,6 @@ use nprpc::{
     },
 };
 
-// TODO: compose clients
 use udp_api::hello::Client as _;
 use udp_api::kv::Client as _;
 autobuffer!(ApiBufs, udp_api::composite);

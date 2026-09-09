@@ -1,3 +1,5 @@
+//! Declarative macros
+
 use postcard_schema_ng::key::Key;
 
 /// Check whether any duplicates are present in the given list.
@@ -116,13 +118,13 @@ macro_rules! interface {
         pub mod $mod_name {
             #[allow(unused_imports)]
             use super::*;
-            use $crate::{io::client::Backend, wire::Method, RequestRaw};
+            use $crate::{io::client::Backend, RequestRaw};
 
-            /// The `endpoints` module contains metadata about each of the methods
-            /// of an interface, and implementations of the `Endpoint` trait.
+            /// The `methods` module contains metadata about each of the methods
+            /// of an interface, and implementations of the `Method` trait.
             ///
             /// You don't usually need to use these items directly.
-            pub mod endpoints {
+            pub mod methods {
                 #[allow(unused_imports)]
                 use super::*;
 
@@ -133,7 +135,7 @@ macro_rules! interface {
                     pub struct $mthd;
 
                     $(#[cfg($mthd_cfg)])?
-                    impl $crate::interface::Endpoint for $mthd {
+                    impl $crate::interface::Method for $mthd {
                         type Request<'rqst> = $rqst_ty;
                         type Response<'resp> = $resp_ty;
                         const NAME: &'static str = concat!(stringify!($mod_name), "/", stringify!($mthd));
@@ -151,7 +153,7 @@ macro_rules! interface {
                 pub const ALL_KEYS: &[Key] = &[
                     $(
                         $(#[cfg($mthd_cfg)])?
-                        <endpoints::$mthd as $crate::interface::Endpoint>::KEY,
+                        <methods::$mthd as $crate::interface::Method>::KEY,
                     )*
                 ];
             }
@@ -162,22 +164,22 @@ macro_rules! interface {
             pub mod info {
                 #[allow(unused_imports)]
                 use super::*;
-                use $crate::interface::{EndpointInfo, InterfaceInfo, Endpoint};
+                use $crate::interface::{MethodInfo, InterfaceInfo, Method};
 
-                /// A list of [`EndpointInfo`] for all methods of this interface
-                const ALL_ENDPOINT_INFOS: &[EndpointInfo] = &[
+                /// A list of [`MethodInfo`] for all methods of this interface
+                const ALL_METHOD_INFOS: &[MethodInfo] = &[
                     $(
                         $(#[cfg($mthd_cfg)])?
-                        <super::endpoints::$mthd as Endpoint>::INFO,
+                        <super::methods::$mthd as Method>::INFO,
                     )*
                 ];
 
-                /// Information about the interface, including the list of all endpoints
+                /// Information about the interface, including the list of all methods
                 /// and the max request/response body size (NOT including any headers!).
                 pub const INTERFACE_INFO: InterfaceInfo = InterfaceInfo {
-                    max_request_size: $crate::interface::req_body_max_buf_required(ALL_ENDPOINT_INFOS),
-                    max_response_size: $crate::interface::resp_body_max_buf_required(ALL_ENDPOINT_INFOS),
-                    endpoints: ALL_ENDPOINT_INFOS,
+                    max_request_size: $crate::interface::rqst_body_max_buf_required(ALL_METHOD_INFOS),
+                    max_response_size: $crate::interface::resp_body_max_buf_required(ALL_METHOD_INFOS),
+                    methods: ALL_METHOD_INFOS,
                 };
             }
 
@@ -198,21 +200,22 @@ macro_rules! interface {
                     req_raw: RequestRaw<'_>,
                     output: &'resp mut [u8],
                 ) -> Result<&'resp [u8], $crate::ServerError> {
-                    // This block ensures that there are no key collisions in all endpoints
+                    // This block ensures that there are no key collisions in all methods
                     const _: () = assert!(
                         $crate::macros::assert_unique(keys::ALL_KEYS),
                         concat!("key collision in interface `", stringify!($mod_name), "`"),
                     );
 
                     // Dispatch based on the received key. We trampoline through a monomorphized
-                    // version of the `process_endpoint_request` function, which handles the
+                    // version of the `process_method
+                    // _request` function, which handles the
                     // common deserialize, process, serialize portion of the code. This is
-                    // stamped out on a per-endpoint basis.
+                    // stamped out on a per-method basis.
                     match req_raw.hedr.key {
                         $(
                             $(#[cfg($mthd_cfg)])?
-                            <endpoints::$mthd as $crate::interface::Endpoint>::KEY => {
-                                $crate::io::server::process_endpoint_request::<endpoints::$mthd, _>(
+                            <methods::$mthd as $crate::interface::Method>::KEY => {
+                                $crate::io::server::process_method_request::<methods::$mthd, _>(
                                     req_raw,
                                     output,
                                     |rqst| <Self as Server>::$mthd(self, rqst)
@@ -221,7 +224,7 @@ macro_rules! interface {
                         )*
 
                         // None of the keys matched, return an error.
-                        _ => Err($crate::ServerError::UnknownEndpoint),
+                        _ => Err($crate::ServerError::UnknownMethod),
                     }
                 }
 
@@ -250,7 +253,7 @@ macro_rules! interface {
                             $crate::Response<$resp_ty>,
                             $crate::ClientIoError<<Self::Io as $crate::io::client::Io>::Error>
                         > {
-                            self.send_then_receive_typed_frames::<endpoints::$mthd>(
+                            self.send_then_receive_typed_frames::<methods::$mthd>(
                                 rqst,
                             )
                         }
@@ -262,6 +265,14 @@ macro_rules! interface {
     };
 }
 
+/// Macro to combine multiple interfaces into a single composite interface.
+///
+/// Produces the same module structure as the [`interface!`] macro. This does
+/// NOT include the `Client` trait, it is still necessary to pull individual
+/// Client traits.
+///
+/// ## Example
+///
 /// ```rust,ignore
 /// compose_interfaces! {
 ///      mod: composite,
@@ -285,30 +296,30 @@ macro_rules! compose_interfaces {
         pub mod $mod_name {
             pub mod keys {
                 use $crate::__private::Key;
-                use super::info::ALL_ENDPOINT_INFOS;
-                const LEN: usize = ALL_ENDPOINT_INFOS.len();
-                pub const ALL_KEYS: &[Key] = &$crate::interface::extract_keys::<LEN>(ALL_ENDPOINT_INFOS);
+                use super::info::ALL_METHOD_INFOS;
+                const LEN: usize = ALL_METHOD_INFOS.len();
+                pub const ALL_KEYS: &[Key] = &$crate::interface::extract_keys::<LEN>(ALL_METHOD_INFOS);
             }
 
             pub mod info {
                 #[allow(unused_imports)]
                 use super::*;
-                use $crate::interface::{EndpointInfo, InterfaceInfo};
-                pub const ALL_ENDPOINT_INFOS: &[EndpointInfo] = {
-                    const SETS: &[&[EndpointInfo]] = &[
+                use $crate::interface::{MethodInfo, InterfaceInfo};
+                pub const ALL_METHOD_INFOS: &[MethodInfo] = {
+                    const SETS: &[&[MethodInfo]] = &[
                         $(
-                            $($segment)::+::info::INTERFACE_INFO.endpoints,
+                            $($segment)::+::info::INTERFACE_INFO.methods,
                         )*
                     ];
                     const N: usize = $crate::interface::total_len(SETS);
-                    const ARR: [EndpointInfo; N] = $crate::interface::flatten(SETS);
+                    const ARR: [MethodInfo; N] = $crate::interface::flatten(SETS);
                     &ARR
                 };
 
                 pub const INTERFACE_INFO: InterfaceInfo = InterfaceInfo {
-                    max_request_size: $crate::interface::req_body_max_buf_required(ALL_ENDPOINT_INFOS),
-                    max_response_size: $crate::interface::resp_body_max_buf_required(ALL_ENDPOINT_INFOS),
-                    endpoints: ALL_ENDPOINT_INFOS,
+                    max_request_size: $crate::interface::rqst_body_max_buf_required(ALL_METHOD_INFOS),
+                    max_response_size: $crate::interface::resp_body_max_buf_required(ALL_METHOD_INFOS),
+                    methods: ALL_METHOD_INFOS,
                 };
             }
 
@@ -367,7 +378,7 @@ macro_rules! compose_interfaces {
                     output: &'buf mut [u8],
                 ) -> Result<&'buf [u8], $crate::ServerError> {
                     // Check all the merged keys to make sure that none of the composed
-                    // endpoints have a collision
+                    // methods have a collision
                     const _: () = assert!(
                         $crate::macros::assert_unique(keys::ALL_KEYS),
                         concat!("key collision in composite interface `", stringify!($mod_name), "`"),
@@ -379,24 +390,59 @@ macro_rules! compose_interfaces {
                         // one at a time until one responds with a non-Unknown result, or we have
                         // exhausted all outcomes.
                         //
-                        // TODO: j/k, that causes borrow errors?
+                        // TODO: j/k, that causes borrow errors. Turns out this is NLL problem case #3:
+                        // https://rust-lang.github.io/rfcs/2094-nll.html#problem-case-3-conditional-control-flow-across-functions
+                        // Revisit this once Polonius lands someday.
+                        //
+                        // let res = <Self as $($segment)::+::Server>::dispatch_one(self, req_raw, output);
+                        // if res != Err($crate::ServerError::UnknownMethod) {
+                        //     return res;
+                        // }
+                        //
+                        // For now, we end up checking the keys twice, here in a `contains` check, and then
+                        // inside dispatch in the form of the `match` statement. Slight perf bummer, but
+                        // at least on hubris the number of keys should be reasonably small (and we early
+                        // return if keys aren't similar).
                         if $($segment)::+::keys::ALL_KEYS.contains(&req_raw.hedr.key) {
                             return <Self as $($segment)::+::Server>::dispatch_one(self, req_raw, output);
                         }
                     )*
 
-                    Err($crate::ServerError::UnknownEndpoint)
+                    Err($crate::ServerError::UnknownMethod)
                 }
             }
         }
     };
 }
 
+/// Defines a buffer type for a given interface
+///
+/// This defines a struct with two fields that are `[u8; N]` arrays that are of
+/// sufficient size to hold the largest single request and largest single
+/// response for the given interface, including headers.
+///
+/// This generated struct also implements the [`Storage`](crate::io::Storage)
+/// trait.
+///
+/// ```rust
+/// use nprpc::{interface, autobuffer};
+///
+/// interface! {
+///     mod example {
+///         fn method(u32) -> u64;
+///     }
+/// }
+///
+/// autobuffer!(ApiBufs, example);
+///
+/// let bufs = ApiBufs::new();
+/// assert_eq!(core::mem::size_of_val(&bufs.rqst_buf), 18);
+/// assert_eq!(core::mem::size_of_val(&bufs.resp_buf), 23);
+/// ```
 #[macro_export]
 macro_rules! autobuffer {
     ($name:ident, $($segment:ident)::+) => {
-
-
+        #[doc = concat!("Automatically sized buffers for the `", stringify!($($segment)::+), "` interface")]
         pub struct $name {
             pub rqst_buf: [u8; Self::_RQST_SIZE],
             pub resp_buf: [u8; Self::_RESP_SIZE],

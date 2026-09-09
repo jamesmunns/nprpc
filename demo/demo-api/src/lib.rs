@@ -167,7 +167,7 @@ mod test {
     use nprpc::{
         RequestRaw, ServerError, autobuffer,
         io::client::{Backend, Io},
-        wire::{Header, Method},
+        wire::{Header, Operation},
     };
 
     use crate::basic::Client;
@@ -247,7 +247,7 @@ mod test {
         }));
 
         let res = cli
-            .send_then_receive_typed_frames::<basic::endpoints::mult_two>(&200)
+            .send_then_receive_typed_frames::<basic::methods::mult_two>(&200)
             .unwrap();
 
         assert_eq!(res.body, 400u32);
@@ -266,12 +266,12 @@ mod test {
         }));
 
         let res = cli.mult_two(&200).unwrap();
-        assert_eq!(res.hedr.method, Method::Response);
+        assert_eq!(res.hedr.op, Operation::Response);
         assert_eq!(res.hedr.seqno, 0);
         assert_eq!(res.body, 400u32);
 
         let res = cli.to_stringa(&123).unwrap();
-        assert_eq!(res.hedr.method, Method::Response);
+        assert_eq!(res.hedr.op, Operation::Response);
         assert_eq!(res.hedr.seqno, 1);
         assert_eq!(res.body.deref(), "123");
     }
@@ -284,7 +284,7 @@ mod test {
         }));
 
         let res = cli
-            .send_then_receive_typed_frames::<basic::endpoints::billy>(
+            .send_then_receive_typed_frames::<basic::methods::billy>(
                 &MaxLenString::<8>::try_from("boop").unwrap(),
             )
             .unwrap();
@@ -312,7 +312,7 @@ mod test {
 
     #[test]
     pub fn info() {
-        for info in composite::info::ALL_ENDPOINT_INFOS {
+        for info in composite::info::ALL_METHOD_INFOS {
             println!("{info:?}");
         }
     }
