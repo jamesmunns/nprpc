@@ -13,7 +13,7 @@ pub struct StorageView<'a> {
 /// Space for requests and responses.
 ///
 /// This trait is typically implemented using buffers that were calculated
-/// using the [`autobuffers!`](crate::autobuffers) macro.
+/// using the [`autobuffer!`](crate::autobuffer) macro.
 ///
 /// The same [`Storage`] trait is used for both [`client`s](crate::io::client)
 /// and [`server`s](crate::io::server).

@@ -33,8 +33,10 @@ pub enum ServerError {
     RequestWrongMethod,
     /// Received a request with an unexpected version field.
     RequestVersionMismatch,
-    /// Received a request for an [`Endpoint`] [`Key`] this server is not
+    /// Received a request for an [`Endpoint`]'s [`Key`] that this server is not
     /// capable of handling
+    ///
+    /// [`Key`]: postcard_schema_ng::key::Key
     UnknownEndpoint,
     /// Received a frame and deserialized the header, but failed to deserialize
     /// the request body.

@@ -45,6 +45,8 @@ pub enum ClientError {
     /// The response contained an unexpected sequence number.
     ResponseBadSeqno,
     /// The response contained an unexpected type tag [`Key`].
+    ///
+    /// [`Key`]: postcard_schema_ng::key::Key
     ResponseKeyMismatch,
 }
 
