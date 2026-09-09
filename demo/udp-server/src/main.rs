@@ -1,11 +1,8 @@
 use std::net::{SocketAddr, UdpSocket};
 
 use nprpc::{
-    ServerInterfaceError, autobuffer,
-    io::{
-        Storage,
-        server::{Backend, RawInterfaceFrame},
-    },
+    ServerIoError, autobuffer,
+    io::{Storage, server::RawIoFrame},
 };
 use postcard_schema_ng::max_len::MaxLenString;
 use udp_api::composite;
@@ -50,9 +47,7 @@ fn main() -> std::io::Result<()> {
     println!();
 
     loop {
-        let res = wire.serve_one(|reqraw, outgoing| {
-            <ServerImpl as composite::Server>::process_one(&mut server, reqraw, outgoing)
-        });
+        let res = <ServerImpl as composite::Server>::serve_one(&mut server, &mut wire);
         if let Err(e) = res {
             println!("Err: {e:?}");
         }
@@ -70,22 +65,18 @@ struct Wire<S: Storage> {
 }
 
 struct BoundUdpSocket(UdpSocket);
-impl nprpc::io::server::Interface for BoundUdpSocket {
+impl nprpc::io::server::Io for BoundUdpSocket {
     type Error = std::io::Error;
     type Meta = SocketAddr;
 
     fn recv_one_frame_raw<'data>(
         &mut self,
         incoming: &'data mut [u8],
-    ) -> Result<Option<RawInterfaceFrame<'data, Self::Meta>>, ServerInterfaceError<Self::Error>>
-    {
-        let (got, peer) = self
-            .0
-            .recv_from(incoming)
-            .map_err(ServerInterfaceError::Interface)?;
+    ) -> Result<Option<RawIoFrame<'data, Self::Meta>>, ServerIoError<Self::Error>> {
+        let (got, peer) = self.0.recv_from(incoming).map_err(ServerIoError::Io)?;
         let used = &incoming[..got];
         println!("==(RECV)=> {} ({:02X?})", got, used);
-        Ok(Some(RawInterfaceFrame {
+        Ok(Some(RawIoFrame {
             meta: peer,
             raw: used,
         }))
@@ -93,23 +84,23 @@ impl nprpc::io::server::Interface for BoundUdpSocket {
 
     fn send_one_frame_raw(
         &mut self,
-        outgoing: RawInterfaceFrame<'_, Self::Meta>,
-    ) -> Result<(), ServerInterfaceError<Self::Error>> {
+        outgoing: RawIoFrame<'_, Self::Meta>,
+    ) -> Result<(), ServerIoError<Self::Error>> {
         // If sending fails oh well, todo maybe log?
         println!("<=(SEND)== {} ({:02X?})", outgoing.raw.len(), outgoing.raw);
         println!();
         self.0
             .send_to(outgoing.raw, outgoing.meta)
             .map(drop)
-            .map_err(ServerInterfaceError::Interface)
+            .map_err(ServerIoError::Io)
     }
 }
 
 impl<S: Storage> nprpc::io::server::Backend for Wire<S> {
     type Storage = S;
-    type Interface = BoundUdpSocket;
+    type Io = BoundUdpSocket;
 
-    fn parts(&mut self) -> (&mut Self::Storage, &mut Self::Interface) {
+    fn parts(&mut self) -> (&mut Self::Storage, &mut Self::Io) {
         let Self { socket, buffers } = self;
         (buffers, socket)
     }

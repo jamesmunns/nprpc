@@ -3,13 +3,12 @@ use postcard::{
     Serializer,
     ser_flavors::{Flavor as _, Slice as SerSlice},
 };
-use postcard_schema_ng::key::Key;
 use serde::Serialize;
 
 use crate::{
     Request, RequestRaw,
     interface::Endpoint,
-    io::{Storage, StorageView},
+    io::Storage,
     wire::{Header, Method, WireError},
 };
 
@@ -140,49 +139,6 @@ pub trait Backend {
     type Storage: Storage;
     type Io: Io;
     fn parts(&mut self) -> (&mut Self::Storage, &mut Self::Io);
-
-    fn serve_one<D: Dispatch>(
-        &mut self,
-        server: &mut D::Server,
-    ) -> Result<(), ServerIoError<<Self::Io as Io>::Error>> {
-        let (sto, intfc) = self.parts();
-        let StorageView { rqst_buf, resp_buf } = sto.buffers();
-
-        // If we got a fatal wire error, return it with ?
-        // If we got no error but no packet, nothing to do
-        let Some(frame) = intfc.recv_one_frame_raw(rqst_buf)? else {
-            return Ok(());
-        };
-
-        let Ok((hdr, remain)) = postcard::take_from_bytes::<Header>(frame.raw) else {
-            return intfc.send_one_error(frame.meta, None, WireError::SERVER_BAD_HEADER, resp_buf);
-        };
-
-        // TODO: Should we be checking version and stuff here? process_one does
-        // that now
-        let rqst_raw = RequestRaw {
-            hdr: hdr.clone(),
-            rqst: remain,
-        };
-
-        let res = D::dispatch_one(server, rqst_raw, resp_buf);
-        match res {
-            Ok(outgoing) => intfc.send_one_frame_raw(RawIoFrame {
-                meta: frame.meta,
-                raw: outgoing,
-            }),
-            Err(e) => intfc.send_one_error(frame.meta, Some(hdr), e.into(), resp_buf),
-        }
-    }
-}
-
-pub trait Dispatch {
-    type Server;
-    fn dispatch_one<'buf>(
-        server: &mut Self::Server,
-        req_raw: RequestRaw<'_>,
-        output: &'buf mut [u8],
-    ) -> Result<&'buf [u8], ServerError>;
 }
 
 pub fn process_endpoint_request<'req, 'resp, 'out, E: Endpoint>(

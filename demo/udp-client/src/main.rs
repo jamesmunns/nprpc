@@ -1,10 +1,10 @@
 use std::{net::UdpSocket, num::Wrapping, time::Duration};
 
 use nprpc::{
-    ClientInterfaceError, autobuffer,
+    autobuffer,
     io::{
         Storage,
-        client::{Backend, Interface},
+        client::{Backend, Io},
     },
 };
 
@@ -50,20 +50,15 @@ fn main() {
 //
 struct ConnectedUdpSocket(UdpSocket);
 
-impl Interface for ConnectedUdpSocket {
+impl Io for ConnectedUdpSocket {
     type Error = std::io::Error;
-    fn send_reply_raw<'a>(
+    fn send_then_receive_raw_frames<'a>(
         &mut self,
         outgoing: &[u8],
         incoming: &'a mut [u8],
-    ) -> Result<&'a [u8], ClientInterfaceError<Self::Error>> {
-        self.0
-            .send(outgoing)
-            .map_err(ClientInterfaceError::Interface)?;
-        let used = self
-            .0
-            .recv(incoming)
-            .map_err(ClientInterfaceError::Interface)?;
+    ) -> Result<&'a [u8], Self::Error> {
+        self.0.send(outgoing)?;
+        let used = self.0.recv(incoming)?;
         Ok(&incoming[..used])
     }
 }
@@ -76,7 +71,7 @@ struct MyClient<S: Storage> {
 
 impl<S: Storage> Backend for MyClient<S> {
     type Storage = S;
-    type Interface = ConnectedUdpSocket;
+    type Io = ConnectedUdpSocket;
 
     fn next_sequence_number(&mut self) -> u16 {
         let now = self.ctr;
@@ -84,7 +79,7 @@ impl<S: Storage> Backend for MyClient<S> {
         now.0
     }
 
-    fn parts(&mut self) -> (&mut Self::Storage, &mut Self::Interface) {
+    fn parts(&mut self) -> (&mut Self::Storage, &mut Self::Io) {
         let Self {
             ctr: _,
             buf,
