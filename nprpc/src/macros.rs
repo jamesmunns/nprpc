@@ -181,6 +181,22 @@ macro_rules! interface {
                 };
             }
 
+            pub struct Dispatch<T: Server> {
+                _pd: core::marker::PhantomData<fn() -> T>,
+            }
+
+            impl<T: Server> $crate::io::server::Dispatch for Dispatch<T> {
+                type Server = T;
+                #[inline]
+                fn dispatch_one<'buf>(
+                    server: &mut Self::Server,
+                    req_raw: RequestRaw<'_>,
+                    output: &'buf mut [u8],
+                ) -> Result<&'buf [u8], $crate::ServerError> {
+                    <T as Server>::process_one(server, req_raw, output)
+                }
+            }
+
             #[doc = concat!("The `", stringify!($mod_name), "` interface server trait")]
             pub trait Server {
                 // Generate all of the user-filled method declarations
@@ -205,16 +221,16 @@ macro_rules! interface {
                     );
 
                     if req_raw.hdr.method != Method::Request {
-                        return Err($crate::ServerError::WrongMethod);
+                        return Err($crate::ServerError::RequestWrongMethod);
                     }
                     if req_raw.hdr.version != 0 {
-                        return Err($crate::ServerError::VersionMismatch);
+                        return Err($crate::ServerError::RequestVersionMismatch);
                     }
 
                     // Dispatch based on the received key. We trampoline through a monomorphized
-                    // version of the `process` function, which handles the common deserialize,
-                    // call, serialize portion of the code. This is stamped out on a per-endpoint
-                    // basis.
+                    // version of the `process_endpoint_request` function, which handles the
+                    // common deserialize, process, serialize portion of the code. This is
+                    // stamped out on a per-endpoint basis.
                     match req_raw.hdr.key {
                         $(
                             $(#[cfg($mthd_cfg)])?
@@ -242,13 +258,12 @@ macro_rules! interface {
                     $(#[doc = $mthd_doc])*
                     $(#[cfg($mthd_cfg)])?
                     #[allow(clippy::ptr_arg)]
-                    fn $mthd<'req, 'resp>(&'resp mut self, req: &$req_ty)
+                    fn $mthd<'req, 'resp>(&'resp mut self, req: &'req $req_ty)
                         -> Result<
                             $crate::Response<$resp_ty>,
-                            $crate::ClientInterfaceError<<Self::Interface as $crate::io::client::Interface>::Error>
+                            $crate::ClientIoError<<Self::Io as $crate::io::client::Io>::Error>
                         > {
-                            self.send_reply::<$req_ty, $resp_ty>(
-                                <endpoints::$mthd as $crate::interface::Endpoint>::KEY,
+                            self.send_then_receive_typed_frames::<endpoints::$mthd>(
                                 req,
                             )
                         }

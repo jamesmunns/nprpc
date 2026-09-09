@@ -20,3 +20,31 @@ pub struct Header {
     pub seqno: u16,
     pub key: Key,
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone, Schema)]
+pub struct WireError(pub u8);
+
+impl WireError {
+    // Server errors
+    pub const SERVER_BAD_HEADER: Self = Self(10u8);
+    pub const SERVER_UNEXPECTED_METHOD: Self = Self(11u8);
+    pub const SERVER_VERSION_MISMATCH: Self = Self(12u8);
+    pub const SERVER_UNKNOWN_ENDPOINT: Self = Self(13u8);
+    pub const SERVER_BAD_BODY: Self = Self(14u8);
+    pub const SERVER_RESPOND_FAILED: Self = Self(15u8);
+
+    pub const KEY: Key = Key::for_path::<Self>("error");
+}
+
+impl From<crate::io::server::ServerError> for WireError {
+    fn from(value: crate::io::server::ServerError) -> Self {
+        match value {
+            crate::ServerError::RequestHeaderDeserialize(_) => Self::SERVER_BAD_HEADER,
+            crate::ServerError::RequestWrongMethod => Self::SERVER_UNEXPECTED_METHOD,
+            crate::ServerError::RequestVersionMismatch => Self::SERVER_VERSION_MISMATCH,
+            crate::ServerError::UnknownEndpoint => Self::SERVER_UNKNOWN_ENDPOINT,
+            crate::ServerError::RequestBodyDeserialize(_) => Self::SERVER_BAD_BODY,
+            crate::ServerError::ResponseSerialize(_) => Self::SERVER_RESPOND_FAILED,
+        }
+    }
+}

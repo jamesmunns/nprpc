@@ -2,8 +2,8 @@ use postcard_schema_ng::{Schema, key::Key, schema::DataModelType};
 use serde::{Deserialize, Serialize};
 
 pub trait Endpoint {
-    type Request<'req>: Schema + Deserialize<'req>;
-    type Response<'resp>: Schema + Serialize;
+    type Request<'req>: Schema + Serialize + Deserialize<'req>;
+    type Response<'resp>: Schema + Serialize + Deserialize<'resp>;
 
     const NAME: &'static str;
 
@@ -34,7 +34,8 @@ pub struct InterfaceInfo {
 }
 
 pub const fn req_body_max_buf_required(infos: &[EndpointInfo]) -> Option<usize> {
-    let mut max = 0;
+    // Ensure that buffers have AT LEAST enough for the WireError type
+    let mut max = crate::wire::WireError::SCHEMA.max_size().unwrap();
     let mut idx = 0;
     while idx < infos.len() {
         let Some(m) = infos[idx].req_schema.max_size() else {
@@ -49,7 +50,8 @@ pub const fn req_body_max_buf_required(infos: &[EndpointInfo]) -> Option<usize> 
 }
 
 pub const fn resp_body_max_buf_required(infos: &[EndpointInfo]) -> Option<usize> {
-    let mut max = 0;
+    // Ensure that buffers have AT LEAST enough for the WireError type
+    let mut max = crate::wire::WireError::SCHEMA.max_size().unwrap();
     let mut idx = 0;
     while idx < infos.len() {
         let Some(m) = infos[idx].resp_schema.max_size() else {

@@ -10,95 +10,107 @@ use crate::{
     Request, RequestRaw,
     interface::Endpoint,
     io::{Storage, StorageView},
-    wire::{Header, Method},
+    wire::{Header, Method, WireError},
 };
 
-pub struct RawInterfaceFrame<'data, T> {
-    /// Interface specific metadata, if any
+/// Raw frame received from or sent to the [`Io`] implementation.
+///
+/// This bundles any implementation-specific metadata, such as a peer address
+/// for UDP comms, with the raw frame (which contains a serialized header and
+/// body).
+pub struct RawIoFrame<'data, T> {
+    /// [`Io`] instance specific metadata, if any.
     pub meta: T,
+    /// Raw serialized frame (header and body).
     pub raw: &'data [u8],
 }
 
+/// Server Errors
 #[derive(Debug, PartialEq)]
 pub enum ServerError {
-    WrongMethod,
-    UnknownEndpoint,
+    /// Received a frame, but failed to deserialize a [`Header`] from the frame.
     RequestHeaderDeserialize(postcard::Error),
+    /// Received a request with an unexpected method field.
+    RequestWrongMethod,
+    /// Received a request with an unexpected version field.
+    RequestVersionMismatch,
+    /// Received a request for an [`Endpoint`] [`Key`] this server is not
+    /// capable of handling
+    UnknownEndpoint,
+    /// Received a frame and deserialized the header, but failed to deserialize
+    /// the request body.
     RequestBodyDeserialize(postcard::Error),
+    /// Failed to serialize a response after processing a request.
     ResponseSerialize(postcard::Error),
-    VersionMismatch,
-    BadHeader,
 }
 
-#[derive(Debug, PartialEq)]
-pub enum ServerInterfaceError<E> {
+/// Error with the server
+///
+/// Can either be an `Io` error with the underlying I/O (while exchanging
+/// frames), or a `Server` error, if the frame contained invalid or
+/// unexpected data.
+pub enum ServerIoError<E> {
     Server(ServerError),
-    Interface(E),
+    Io(E),
 }
 
-impl<E> From<ServerError> for ServerInterfaceError<E> {
+impl<E> From<ServerError> for ServerIoError<E> {
     fn from(value: ServerError) -> Self {
         Self::Server(value)
     }
 }
 
-// TODO: "Interface" is an overloaded term. Maybe call this "Wire" or something
-// that gets across that this is the "I/O" portion of the backend.
-//
-// TODO: Right now the client has one send+recv fn that does both back to back
-// and doesn't have to expose a metadata param, while the server has split them
-// up. Is this good? Do we want to make this consistent? Or document why not being
-// consistent is the right choice here.
-pub trait Interface {
+/// The `Io` abstraction for a client
+///
+/// This interface is responsible for receiving a request frame from the
+/// client, and sending a response frame.
+pub trait Io {
     /// Metadata, like the peer address for UDP
     type Meta;
+
+    /// The I/O specific error type
     type Error: Debug;
 
-    // TODO: this is for getting a request
-    // TODO: do we need some interface specific metadata to capture stuff like
-    // the source address for UDP?
-    // TODO: do we need a None option for cases where we don't want to send a NAK
-    // back the the sending party?
-    // TODO: None means "no error" but also "no data"
+    /// Receive a single raw frame, containing a serialized header and body.
     fn recv_one_frame_raw<'data>(
         &mut self,
         incoming: &'data mut [u8],
-    ) -> Result<Option<RawInterfaceFrame<'data, Self::Meta>>, ServerInterfaceError<Self::Error>>;
+    ) -> Result<Option<RawIoFrame<'data, Self::Meta>>, ServerIoError<Self::Error>>;
 
-    // TODO: this is for sending a response
-    //
-    // TODO: we can't use RawInterfaceFrame because we don't want the header
-    // separate so we can serialize it all together.
+    /// Transmit a single raw frame, containing a serialized header and body.
+    ///
+    /// The frame is transmitted with a copy of the [`Io::Meta`] that was
+    /// obtained from the previous call to [`Io::recv_one_frame_raw`],
+    /// unmodified.
     fn send_one_frame_raw(
         &mut self,
-        outgoing: RawInterfaceFrame<'_, Self::Meta>,
-    ) -> Result<(), ServerInterfaceError<Self::Error>>;
+        outgoing: RawIoFrame<'_, Self::Meta>,
+    ) -> Result<(), ServerIoError<Self::Error>>;
 
-    // TODO: this is for sending an error response. This is the wrong error type.
-    // this should only return an error if it is fatal, like "connection lost".
-    // Even then, probably not much to do about it.
-    //
-    // TODO: Option<Header>? this would be for whether we did decode a header at
-    // all. Maybe this is two different functions and/or error kinds.
+    /// Transmit an error response.
+    ///
+    /// We may or may not have a header, depending on whether decoding of the
+    /// incoming header was successful or not, and at what stage the error
+    /// occurred.
+    ///
+    /// The error response will have the `ErrorResponse` method type and the
+    /// `WireError::KEY`. If a header was decoded, the sequence number will be
+    /// copied from that header, otherwise `0`.
+    ///
+    /// The body of the response will be of type `WireError`, and serialied
+    /// into the `resp_buf`.
     fn send_one_error(
         &mut self,
         meta: Self::Meta,
         hdr: Option<Header>,
-        _err: ServerError,
+        err: WireError,
         resp_buf: &mut [u8],
-    ) -> Result<(), ServerInterfaceError<Self::Error>> {
-        let hdr = if let Some(mut hdr) = hdr {
-            // TODO: wire error type? Reserved names?
-            hdr.key = Key::for_path::<()>("error");
-            hdr.method = Method::ErrorResponse;
-            hdr
-        } else {
-            Header {
-                version: 0,
-                method: Method::ErrorResponse,
-                seqno: 0,
-                key: Key::for_path::<()>("error"),
-            }
+    ) -> Result<(), ServerIoError<Self::Error>> {
+        let hdr = Header {
+            version: 0,
+            method: Method::ErrorResponse,
+            seqno: hdr.map(|h| h.seqno).unwrap_or(0),
+            key: WireError::KEY,
         };
 
         let mut out = Serializer {
@@ -106,8 +118,7 @@ pub trait Interface {
         };
         hdr.serialize(&mut out)
             .map_err(ServerError::ResponseSerialize)?;
-        // TODO: Actually serialize `err` here
-        ().serialize(&mut out)
+        err.serialize(&mut out)
             .map_err(ServerError::ResponseSerialize)?;
         // TODO: CRC? Wrapping flavor?
         let used = out
@@ -115,25 +126,35 @@ pub trait Interface {
             .finalize()
             .map_err(ServerError::ResponseSerialize)?;
 
-        let frame = RawInterfaceFrame { meta, raw: used };
+        let frame = RawIoFrame { meta, raw: used };
 
         self.send_one_frame_raw(frame)
     }
+}
 
-    fn serve_one(
+// TODO: "Backend" isn't a very meaningful name. Come up with a name that better
+// gets across that this contains room for ser/de as well as the I/O portion of
+// the work.
+pub trait Backend {
+    type Storage: Storage;
+    type Io: Io;
+    fn parts(&mut self) -> (&mut Self::Storage, &mut Self::Io);
+
+    fn serve_one<D: Dispatch>(
         &mut self,
-        rqst_buf: &mut [u8],
-        resp_buf: &mut [u8],
-        func: impl for<'a> FnOnce(RequestRaw<'_>, &'a mut [u8]) -> Result<&'a [u8], ServerError>,
-    ) -> Result<(), ServerInterfaceError<Self::Error>> {
+        server: &mut D::Server,
+    ) -> Result<(), ServerIoError<<Self::Io as Io>::Error>> {
+        let (sto, intfc) = self.parts();
+        let StorageView { rqst_buf, resp_buf } = sto.buffers();
+
         // If we got a fatal wire error, return it with ?
         // If we got no error but no packet, nothing to do
-        let Some(frame) = self.recv_one_frame_raw(rqst_buf)? else {
+        let Some(frame) = intfc.recv_one_frame_raw(rqst_buf)? else {
             return Ok(());
         };
 
         let Ok((hdr, remain)) = postcard::take_from_bytes::<Header>(frame.raw) else {
-            return self.send_one_error(frame.meta, None, ServerError::BadHeader, resp_buf);
+            return intfc.send_one_error(frame.meta, None, WireError::SERVER_BAD_HEADER, resp_buf);
         };
 
         // TODO: Should we be checking version and stuff here? process_one does
@@ -143,32 +164,24 @@ pub trait Interface {
             rqst: remain,
         };
 
-        let res = (func)(rqst_raw, resp_buf);
+        let res = D::dispatch_one(server, rqst_raw, resp_buf);
         match res {
-            Ok(outgoing) => self.send_one_frame_raw(RawInterfaceFrame {
+            Ok(outgoing) => intfc.send_one_frame_raw(RawIoFrame {
                 meta: frame.meta,
                 raw: outgoing,
             }),
-            Err(e) => self.send_one_error(frame.meta, Some(hdr), e, resp_buf),
+            Err(e) => intfc.send_one_error(frame.meta, Some(hdr), e.into(), resp_buf),
         }
     }
 }
 
-// TODO: "Backend" isn't a very meaningful name. Come up with a name that better
-// gets across that this contains room for ser/de as well as the I/O portion of
-// the work.
-pub trait Backend {
-    type Storage: Storage;
-    type Interface: Interface;
-    fn parts(&mut self) -> (&mut Self::Storage, &mut Self::Interface);
-    fn serve_one(
-        &mut self,
-        func: impl for<'a> FnOnce(RequestRaw<'_>, &'a mut [u8]) -> Result<&'a [u8], ServerError>,
-    ) -> Result<(), ServerInterfaceError<<Self::Interface as Interface>::Error>> {
-        let (sto, intfc) = self.parts();
-        let StorageView { rqst_buf, resp_buf } = sto.buffers();
-        intfc.serve_one(rqst_buf, resp_buf, func)
-    }
+pub trait Dispatch {
+    type Server;
+    fn dispatch_one<'buf>(
+        server: &mut Self::Server,
+        req_raw: RequestRaw<'_>,
+        output: &'buf mut [u8],
+    ) -> Result<&'buf [u8], ServerError>;
 }
 
 pub fn process_endpoint_request<'req, 'resp, 'out, E: Endpoint>(

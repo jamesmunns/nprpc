@@ -10,8 +10,8 @@ pub mod interface;
 pub mod io;
 pub mod wire;
 
-pub use io::client::{ClientError, ClientInterfaceError};
-pub use io::server::{ServerError, ServerInterfaceError};
+pub use io::client::{ClientError, ClientIoError};
+pub use io::server::{ServerError, ServerIoError};
 
 // TODO: Should the `Key`s we generate also hash the Header and Error type to
 // ensure complete compatibility? Do we consider this part of the versioning?

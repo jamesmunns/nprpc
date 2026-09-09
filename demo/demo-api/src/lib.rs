@@ -165,11 +165,10 @@ mod test {
     use std::ops::Deref;
 
     use nprpc::{
-        ClientInterfaceError, RequestRaw, ServerError, autobuffer,
-        io::client::{Backend, Interface},
+        RequestRaw, ServerError, autobuffer,
+        io::client::{Backend, Io},
         wire::{Header, Method},
     };
-    use postcard_schema_ng::key::Key;
 
     use crate::basic::Client;
 
@@ -178,22 +177,18 @@ mod test {
     // Automatically sized buffers for the composite interface
     autobuffer!(CompBuffers, crate::composite);
 
-    struct ServerInterface {
+    struct ServerAsClient {
         #[allow(clippy::type_complexity)]
-        inner: Box<
-            dyn for<'a> FnMut(
-                RequestRaw<'_>,
-                &'a mut [u8],
-            ) -> Result<&'a [u8], ClientInterfaceError<ServerError>>,
-        >,
+        inner:
+            Box<dyn for<'a> FnMut(RequestRaw<'_>, &'a mut [u8]) -> Result<&'a [u8], ServerError>>,
     }
-    impl Interface for ServerInterface {
+    impl Io for ServerAsClient {
         type Error = ServerError;
-        fn send_reply_raw<'a>(
+        fn send_then_receive_raw_frames<'a>(
             &mut self,
             outgoing: &[u8],
             incoming: &'a mut [u8],
-        ) -> Result<&'a [u8], ClientInterfaceError<Self::Error>> {
+        ) -> Result<&'a [u8], Self::Error> {
             println!("=> {:?}", outgoing);
             let (hdr, remain) = postcard::take_from_bytes::<Header>(outgoing).unwrap();
             println!("-> {:?}", hdr.key);
@@ -204,7 +199,7 @@ mod test {
 
     struct TestClient {
         buf: CompBuffers,
-        intfc: ServerInterface,
+        intfc: ServerAsClient,
         seq: u16,
     }
 
@@ -215,16 +210,12 @@ mod test {
         #[allow(clippy::type_complexity)]
         pub fn new(
             hdlr: Box<
-                dyn for<'a> FnMut(
-                    RequestRaw<'_>,
-                    &'a mut [u8],
-                )
-                    -> Result<&'a [u8], ClientInterfaceError<ServerError>>,
+                dyn for<'a> FnMut(RequestRaw<'_>, &'a mut [u8]) -> Result<&'a [u8], ServerError>,
             >,
         ) -> Self {
             TestClient {
                 buf: CompBuffers::new(),
-                intfc: ServerInterface { inner: hdlr },
+                intfc: ServerAsClient { inner: hdlr },
                 seq: 0,
             }
         }
@@ -232,7 +223,7 @@ mod test {
 
     impl Backend for TestClient {
         type Storage = CompBuffers;
-        type Interface = ServerInterface;
+        type Io = ServerAsClient;
 
         fn next_sequence_number(&mut self) -> u16 {
             let now = self.seq;
@@ -240,7 +231,7 @@ mod test {
             now
         }
 
-        fn parts(&mut self) -> (&mut Self::Storage, &mut Self::Interface) {
+        fn parts(&mut self) -> (&mut Self::Storage, &mut Self::Io) {
             let Self { buf, intfc, seq: _ } = self;
             (buf, intfc)
         }
@@ -256,7 +247,7 @@ mod test {
         }));
 
         let res = cli
-            .send_reply::<u32, u32>(Key::for_2ty_path::<u32, u32>("basic/mult_two"), &200)
+            .send_then_receive_typed_frames::<basic::endpoints::mult_two>(&200)
             .unwrap();
 
         assert_eq!(res.resp, 400u32);
@@ -293,8 +284,7 @@ mod test {
         }));
 
         let res = cli
-            .send_reply::<MaxLenString<8>, MaxLenString<8>>(
-                Key::for_2ty_path::<MaxLenString<8>, MaxLenString<8>>("basic/billy"),
+            .send_then_receive_typed_frames::<basic::endpoints::billy>(
                 &MaxLenString::<8>::try_from("boop").unwrap(),
             )
             .unwrap();
