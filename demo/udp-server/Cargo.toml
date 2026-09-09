@@ -1,0 +1,10 @@
+[package]
+name = "udp-server"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+udp-api.path = "../udp-api"
+nprpc.path = "../../nprpc"
+postcard.workspace = true
+postcard-schema-ng.workspace = true
