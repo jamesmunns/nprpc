@@ -51,7 +51,7 @@ interface! {
         fn billy(MaxLenString<8>) -> MaxLenString<8>;
         /// Bim - when used on embedded
         #[cfg(not(feature = "std"))]
-        fn billy(MaxLenStr<'req, 8>) -> MaxLenStr<'resp, 8>;
+        fn billy(MaxLenStr<'rqst, 8>) -> MaxLenStr<'resp, 8>;
         /// Bap
         fn to_stringd(MaxLenString<8>) -> MaxLenString<8>;
         /// Swoop
@@ -88,40 +88,40 @@ use nprpc::Request;
 
 #[cfg(feature = "std")]
 impl basic::Server for ServerImpl {
-    fn mult_two(&mut self, req: Request<u32>) -> u32 {
-        req.req * 2
+    fn mult_two(&mut self, rqst: Request<u32>) -> u32 {
+        rqst.body * 2
     }
 
-    fn to_stringa(&mut self, req: Request<u32>) -> MaxLenString<8> {
-        req.req.to_string().try_into().unwrap()
+    fn to_stringa(&mut self, rqst: Request<u32>) -> MaxLenString<8> {
+        rqst.body.to_string().try_into().unwrap()
     }
 
-    fn to_stringb(&mut self, req: Request<MaxLenString<8>>) -> u32 {
-        req.req.len() as u32
+    fn to_stringb(&mut self, rqst: Request<MaxLenString<8>>) -> u32 {
+        rqst.body.len() as u32
     }
 
-    fn to_stringd(&mut self, req: Request<MaxLenString<8>>) -> MaxLenString<8> {
-        req.req
+    fn to_stringd(&mut self, rqst: Request<MaxLenString<8>>) -> MaxLenString<8> {
+        rqst.body
     }
 
-    fn billy(&mut self, req: Request<MaxLenString<8>>) -> MaxLenString<8> {
-        if req.req.len() > 5 {
+    fn billy(&mut self, rqst: Request<MaxLenString<8>>) -> MaxLenString<8> {
+        if rqst.body.len() > 5 {
             MaxLenString::<8>::try_from(":(").unwrap()
         } else {
             MaxLenString::<8>::try_from(":)").unwrap()
         }
     }
 
-    fn is_good(&mut self, req: Request<Fancy>) -> bool {
+    fn is_good(&mut self, rqst: Request<Fancy>) -> bool {
         let mut good = true;
-        for g in req.req.g {
+        for g in rqst.body.g {
             good &= g;
         }
         good
     }
 
-    fn fancy_boi(&mut self, req: Request<Fancy>) -> u32 {
-        req.req.c * 5
+    fn fancy_boi(&mut self, rqst: Request<Fancy>) -> u32 {
+        rqst.body.c * 5
     }
 }
 
@@ -132,8 +132,8 @@ impl ops::Server for ServerImpl {
 }
 
 impl two::Server for ServerImpl {
-    fn one_more_thing(&mut self, req: Request<u32>) -> bool {
-        req.req.is_multiple_of(2)
+    fn one_more_thing(&mut self, rqst: Request<u32>) -> bool {
+        rqst.body.is_multiple_of(2)
     }
 }
 
@@ -142,8 +142,8 @@ impl two::Server for ServerImpl {
 interface! {
     mod borrow {
         fn fancy_boi2(Fancy) -> MaxLenStr<'resp, 8>;
-        fn fancy_boi4(MaxLenStr<'req, 8>) -> Fancy;
-        fn bypass(MaxLenStr<'req, 8>) -> MaxLenStr<'resp, 8>;
+        fn fancy_boi4(MaxLenStr<'rqst, 8>) -> Fancy;
+        fn bypass(MaxLenStr<'rqst, 8>) -> MaxLenStr<'resp, 8>;
     }
 }
 
@@ -190,9 +190,9 @@ mod test {
             incoming: &'a mut [u8],
         ) -> Result<&'a [u8], Self::Error> {
             println!("=> {:?}", outgoing);
-            let (hdr, remain) = postcard::take_from_bytes::<Header>(outgoing).unwrap();
-            println!("-> {:?}", hdr.key);
-            let raw = RequestRaw { hdr, rqst: remain };
+            let (hedr, body) = postcard::take_from_bytes::<Header>(outgoing).unwrap();
+            println!("-> {:?}", hedr.key);
+            let raw = RequestRaw { hedr, body };
             (self.inner)(raw, incoming)
         }
     }
@@ -250,7 +250,7 @@ mod test {
             .send_then_receive_typed_frames::<basic::endpoints::mult_two>(&200)
             .unwrap();
 
-        assert_eq!(res.resp, 400u32);
+        assert_eq!(res.body, 400u32);
     }
 
     #[test]
@@ -266,14 +266,14 @@ mod test {
         }));
 
         let res = cli.mult_two(&200).unwrap();
-        assert_eq!(res.hdr.method, Method::Response);
-        assert_eq!(res.hdr.seqno, 0);
-        assert_eq!(res.resp, 400u32);
+        assert_eq!(res.hedr.method, Method::Response);
+        assert_eq!(res.hedr.seqno, 0);
+        assert_eq!(res.body, 400u32);
 
         let res = cli.to_stringa(&123).unwrap();
-        assert_eq!(res.hdr.method, Method::Response);
-        assert_eq!(res.hdr.seqno, 1);
-        assert_eq!(res.resp.deref(), "123");
+        assert_eq!(res.hedr.method, Method::Response);
+        assert_eq!(res.hedr.seqno, 1);
+        assert_eq!(res.body.deref(), "123");
     }
 
     #[test]
@@ -289,7 +289,7 @@ mod test {
             )
             .unwrap();
 
-        assert_eq!(res.resp.deref(), ":)");
+        assert_eq!(res.body.deref(), ":)");
     }
 
     #[test]

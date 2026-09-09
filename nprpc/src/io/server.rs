@@ -102,21 +102,21 @@ pub trait Io {
     fn send_one_error(
         &mut self,
         meta: Self::Meta,
-        hdr: Option<Header>,
+        hedr: Option<Header>,
         err: WireError,
         resp_buf: &mut [u8],
     ) -> Result<(), ServerIoError<Self::Error>> {
-        let hdr = Header {
+        let hedr = Header {
             version: 0,
             method: Method::ErrorResponse,
-            seqno: hdr.map(|h| h.seqno).unwrap_or(0),
+            seqno: hedr.map(|h| h.seqno).unwrap_or(0),
             key: WireError::KEY,
         };
 
         let mut out = Serializer {
             output: SerSlice::new(resp_buf),
         };
-        hdr.serialize(&mut out)
+        hedr.serialize(&mut out)
             .map_err(ServerError::ResponseSerialize)?;
         err.serialize(&mut out)
             .map_err(ServerError::ResponseSerialize)?;
@@ -154,20 +154,20 @@ pub fn serve_one_with_dispatcher<B: Backend>(
         return Ok(());
     };
 
-    let Ok((hdr, remain)) = postcard::take_from_bytes::<Header>(frame.raw) else {
+    let Ok((hedr, remain)) = postcard::take_from_bytes::<Header>(frame.raw) else {
         return intfc.send_one_error(frame.meta, None, WireError::SERVER_BAD_HEADER, resp_buf);
     };
 
-    if hdr.method != Method::Request {
+    if hedr.method != Method::Request {
         return Err(ServerIoError::Server(ServerError::RequestWrongMethod));
     }
-    if hdr.version != 0 {
+    if hedr.version != 0 {
         return Err(ServerIoError::Server(ServerError::RequestVersionMismatch));
     }
 
     let rqst_raw = RequestRaw {
-        hdr: hdr.clone(),
-        rqst: remain,
+        hedr: hedr.clone(),
+        body: remain,
     };
 
     let res = dispatcher(rqst_raw, resp_buf);
@@ -176,36 +176,36 @@ pub fn serve_one_with_dispatcher<B: Backend>(
             meta: frame.meta,
             raw: outgoing,
         }),
-        Err(e) => intfc.send_one_error(frame.meta, Some(hdr), e.into(), resp_buf),
+        Err(e) => intfc.send_one_error(frame.meta, Some(hedr), e.into(), resp_buf),
     }
 }
 
-pub fn process_endpoint_request<'req, 'resp, 'out, E: Endpoint>(
-    req_raw: RequestRaw<'req>,
+pub fn process_endpoint_request<'rqst, 'resp, 'out, E: Endpoint>(
+    rqst_raw: RequestRaw<'rqst>,
     out: &'out mut [u8],
-    func: impl FnOnce(Request<E::Request<'req>>) -> E::Response<'resp>,
+    func: impl FnOnce(Request<E::Request<'rqst>>) -> E::Response<'resp>,
 ) -> Result<&'out [u8], ServerError> {
-    let RequestRaw { mut hdr, rqst } = req_raw;
+    let RequestRaw { mut hedr, body } = rqst_raw;
 
     // Deserialize
     let body: E::Request<'_> =
-        postcard::from_bytes(rqst).map_err(ServerError::RequestBodyDeserialize)?;
+        postcard::from_bytes(body).map_err(ServerError::RequestBodyDeserialize)?;
 
     // TODO: ensure all bytes consumed?
 
     // Process request
-    // TODO: Pass hdr + req by reference? Probably no need to copy/move.
-    let req = Request {
-        hdr: hdr.clone(),
-        req: body,
+    // TODO: Pass hedr + rqst by reference? Probably no need to copy/move.
+    let rqst = Request {
+        hedr: hedr.clone(),
+        body,
     };
-    let resp = func(req);
+    let resp = func(rqst);
     // Serialize response
     let mut out = Serializer {
         output: SerSlice::new(out),
     };
-    hdr.method = Method::Response;
-    hdr.serialize(&mut out)
+    hedr.method = Method::Response;
+    hedr.serialize(&mut out)
         .map_err(ServerError::ResponseSerialize)?;
     resp.serialize(&mut out)
         .map_err(ServerError::ResponseSerialize)?;

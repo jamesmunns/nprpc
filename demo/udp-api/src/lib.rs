@@ -25,7 +25,7 @@ interface! {
         #[cfg(feature = "std")]
         fn set_name(MaxLenString<32>) -> ();
         #[cfg(not(feature = "std"))]
-        fn set_name(MaxLenStr<'req, 32>) -> ();
+        fn set_name(MaxLenStr<'rqst, 32>) -> ();
         #[cfg(feature = "std")]
         fn get_name(()) -> Option<MaxLenString<32>>;
         #[cfg(not(feature = "std"))]

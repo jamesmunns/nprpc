@@ -2,7 +2,7 @@ use postcard_schema_ng::{Schema, key::Key, schema::DataModelType};
 use serde::{Deserialize, Serialize};
 
 pub trait Endpoint {
-    type Request<'req>: Schema + Serialize + Deserialize<'req>;
+    type Request<'rqst>: Schema + Serialize + Deserialize<'rqst>;
     type Response<'resp>: Schema + Serialize + Deserialize<'resp>;
 
     const NAME: &'static str;

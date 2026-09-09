@@ -30,7 +30,7 @@ pub const fn assert_unique(keys: &[Key]) -> bool {
 ///
 /// We support two specific lifetimes when defining an interface:
 ///
-/// * `'req`:
+/// * `'rqst`:
 ///     * For servers: this information is borrowed from the raw incoming
 ///       request message when deserializing.
 ///     * For clients: this information is borrowed from the user-passed request.
@@ -73,9 +73,9 @@ pub const fn assert_unique(keys: &[Key]) -> bool {
 ///         ///
 ///         /// On our no-std system, we will use a borrowed string with a
 ///         /// bounded max len of 3 elements, enough to convert the `u8` to
-///         /// text. We can use the `'rsp` lifetime to for borrowed responses.
+///         /// text. We can use the `'resp` lifetime to for borrowed responses.
 ///         #[cfg(not(feature = "std"))]
-///         fn to_string(u8) -> postcard_schema_ng::max_len::MaxLenStr<'rsp, 3>;
+///         fn to_string(u8) -> postcard_schema_ng::max_len::MaxLenStr<'resp, 3>;
 ///
 ///         /// On a hosted machine, we might not want to borrow our data, and
 ///         /// instead directly heap-allocate the response instead. Notice how
@@ -89,8 +89,8 @@ pub const fn assert_unique(keys: &[Key]) -> bool {
 ///         fn to_string(u8) -> postcard_schema_ng::max_len::MaxLenString<3>;
 ///
 ///         /// We can also borrow from the incoming message to get a borrowed
-///         /// str out of the request, using the `'req` lifetime.
-///         fn to_byte(postcard_schema_ng::max_len::MaxLenStr<'req, 3>) -> u8;
+///         /// str out of the request, using the `'rqst` lifetime.
+///         fn to_byte(postcard_schema_ng::max_len::MaxLenStr<'rqst, 3>) -> u8;
 ///     }
 /// }
 /// ```
@@ -102,7 +102,7 @@ macro_rules! interface {
             $(
                 $(#[doc = $mthd_doc:literal])*
                 $(#[cfg($mthd_cfg:meta)])*
-                fn $mthd:ident($req_ty:ty) -> $resp_ty:ty;
+                fn $mthd:ident($rqst_ty:ty) -> $resp_ty:ty;
             )*
         }
  ) => {
@@ -134,7 +134,7 @@ macro_rules! interface {
 
                     $(#[cfg($mthd_cfg)])?
                     impl $crate::interface::Endpoint for $mthd {
-                        type Request<'req> = $req_ty;
+                        type Request<'rqst> = $rqst_ty;
                         type Response<'resp> = $resp_ty;
                         const NAME: &'static str = concat!(stringify!($mod_name), "/", stringify!($mthd));
                     }
@@ -187,7 +187,7 @@ macro_rules! interface {
                 $(
                     $(#[doc = $mthd_doc])*
                     $(#[cfg($mthd_cfg)])?
-                    fn $mthd<'req, 'resp>(&'resp mut self, req: $crate::Request<$req_ty>) -> $resp_ty;
+                    fn $mthd<'rqst, 'resp>(&'resp mut self, rqst: $crate::Request<$rqst_ty>) -> $resp_ty;
                 )*
 
                 /// This method is the prime dispatcher. It takes a processed header and raw body,
@@ -208,14 +208,14 @@ macro_rules! interface {
                     // version of the `process_endpoint_request` function, which handles the
                     // common deserialize, process, serialize portion of the code. This is
                     // stamped out on a per-endpoint basis.
-                    match req_raw.hdr.key {
+                    match req_raw.hedr.key {
                         $(
                             $(#[cfg($mthd_cfg)])?
                             <endpoints::$mthd as $crate::interface::Endpoint>::KEY => {
                                 $crate::io::server::process_endpoint_request::<endpoints::$mthd>(
                                     req_raw,
                                     output,
-                                    |req| <Self as Server>::$mthd(self, req)
+                                    |rqst| <Self as Server>::$mthd(self, rqst)
                                 )
                             }
                         )*
@@ -245,13 +245,13 @@ macro_rules! interface {
                     $(#[doc = $mthd_doc])*
                     $(#[cfg($mthd_cfg)])?
                     #[allow(clippy::ptr_arg)]
-                    fn $mthd<'req, 'resp>(&'resp mut self, req: &'req $req_ty)
+                    fn $mthd<'rqst, 'resp>(&'resp mut self, rqst: &'rqst $rqst_ty)
                         -> Result<
                             $crate::Response<$resp_ty>,
                             $crate::ClientIoError<<Self::Io as $crate::io::client::Io>::Error>
                         > {
                             self.send_then_receive_typed_frames::<endpoints::$mthd>(
-                                req,
+                                rqst,
                             )
                         }
                 )*
@@ -380,7 +380,7 @@ macro_rules! compose_interfaces {
                         // exhausted all outcomes.
                         //
                         // TODO: j/k, that causes borrow errors?
-                        if $($segment)::+::keys::ALL_KEYS.contains(&req_raw.hdr.key) {
+                        if $($segment)::+::keys::ALL_KEYS.contains(&req_raw.hedr.key) {
                             return <Self as $($segment)::+::Server>::dispatch_one(self, req_raw, output);
                         }
                     )*
@@ -398,31 +398,30 @@ macro_rules! autobuffer {
 
 
         pub struct $name {
-            pub rqst_buf: [u8; Self::_HDR_SIZE + Self::_RQST_SIZE],
-            pub resp_buf: [u8; Self::_HDR_SIZE + Self::_RESP_SIZE],
+            pub rqst_buf: [u8; Self::_RQST_SIZE],
+            pub resp_buf: [u8; Self::_RESP_SIZE],
         }
 
         impl $name {
             const _HDR_SIZE: usize = <$crate::wire::Header as $crate::__private::Schema>::SCHEMA.max_size()
             .expect("Unable to automatically size buffer. \
                 Header doesn't have a max size.");
-            const _RQST_SIZE: usize = $($segment)::+::info::INTERFACE_INFO.max_request_size
+            const _RQST_BODY_SIZE: usize = $($segment)::+::info::INTERFACE_INFO.max_request_size
                 .expect("Unable to automatically size buffer. \
                     One or more request types don't have a max size.");
-            const _RESP_SIZE: usize = $($segment)::+::info::INTERFACE_INFO.max_response_size
+            const _RESP_BODY_SIZE: usize = $($segment)::+::info::INTERFACE_INFO.max_response_size
                 .expect("Unable to automatically size buffer. \
                     One or more response types don't have a max size.");
+            const _RQST_SIZE: usize = Self::_HDR_SIZE + Self::_RQST_BODY_SIZE;
+            const _RESP_SIZE: usize = Self::_HDR_SIZE + Self::_RESP_BODY_SIZE;
 
             pub const fn new() -> Self {
                 Self {
-                    rqst_buf: [0u8; Self::_HDR_SIZE + Self::_RQST_SIZE],
-                    resp_buf: [0u8; Self::_HDR_SIZE + Self::_RESP_SIZE],
+                    rqst_buf: [0u8; Self::_RQST_SIZE],
+                    resp_buf: [0u8; Self::_RESP_SIZE],
                 }
             }
         }
-
-        // TODO: this only implements a client storage trait, do we want to use
-        // this for some kind of server buffer too?
 
         impl $crate::io::Storage for $name {
             fn buffers(&mut self) -> $crate::io::StorageView<'_> {

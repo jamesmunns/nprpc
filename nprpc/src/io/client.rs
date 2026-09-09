@@ -111,16 +111,16 @@ pub trait Backend {
     ///
     /// Finally, we attempt to deserialize that raw frame into a header and
     /// body, and return the result to the caller.
-    fn send_then_receive_typed_frames<'req, 'resp, E: Endpoint>(
+    fn send_then_receive_typed_frames<'rqst, 'resp, E: Endpoint>(
         &'resp mut self,
-        req: &E::Request<'req>,
+        rqst: &E::Request<'rqst>,
     ) -> Result<Response<E::Response<'resp>>, ClientIoError<<Self::Io as Io>::Error>> {
         let seqno = self.next_sequence_number();
         let (storage, interface) = self.parts();
         let StorageView { rqst_buf, resp_buf } = storage.buffers();
 
         // SERIALIZE OUTGOING...
-        let hdrout = Header {
+        let hedr_rqst = Header {
             method: Method::Request,
             version: 0,
             seqno,
@@ -129,10 +129,10 @@ pub trait Backend {
         let mut out = Serializer {
             output: SerSlice::new(rqst_buf),
         };
-        hdrout
+        hedr_rqst
             .serialize(&mut out)
             .map_err(ClientError::RequestSerialize)?;
-        req.serialize(&mut out)
+        rqst.serialize(&mut out)
             .map_err(ClientError::RequestSerialize)?;
         // TODO: CRC? Wrapping flavor?
         let used = out
@@ -147,16 +147,16 @@ pub trait Backend {
 
         // DESERIALIZE INCOMING
         let mut inc = Deserializer::from_flavor(DeSlice::new(recvd));
-        let hdrin =
+        let hedr_resp =
             Header::deserialize(&mut inc).map_err(ClientError::ResponseHeaderDeserialize)?;
 
         // Check that response header matches all the qualities that we
         // expect...
 
-        if hdrin.version != hdrout.version {
+        if hedr_resp.version != hedr_rqst.version {
             return Err(ClientError::ResponseVersionMismatch.into());
         }
-        if hdrin.method != Method::Response {
+        if hedr_resp.method != Method::Response {
             return Err(ClientError::ResponseBadMethod.into());
         }
 
@@ -165,10 +165,10 @@ pub trait Backend {
         // data at all, like with a CRC error or header corruption. In this
         // case, the seqno and key may not match at all.
 
-        if hdrin.seqno != hdrout.seqno {
+        if hedr_resp.seqno != hedr_rqst.seqno {
             return Err(ClientError::ResponseBadSeqno.into());
         }
-        if hdrin.key != hdrout.key {
+        if hedr_resp.key != hedr_rqst.key {
             return Err(ClientError::ResponseKeyMismatch.into());
         }
 
@@ -179,8 +179,8 @@ pub trait Backend {
         // TODO: Ensure all bytes have been consumed? DeSlice::finalize?
 
         Ok(Response {
-            hdr: hdrin,
-            resp: body,
+            hedr: hedr_resp,
+            body,
         })
     }
 }

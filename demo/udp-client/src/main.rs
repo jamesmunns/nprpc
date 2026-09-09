@@ -28,13 +28,13 @@ fn main() {
     for i in 0..3 {
         let got = client.loopback(&i).unwrap();
         println!("Loopback Success:");
-        println!("  - hdr:  {:?}", got.hdr);
-        println!("  - resp: {}", got.resp);
+        println!("  - hedr: {:?}", got.hedr);
+        println!("  - resp: {}", got.body);
 
         println!();
         println!("Get name...");
         let name = client.get_name(&()).unwrap();
-        println!("  - resp: {:?}", name.resp);
+        println!("  - resp: {:?}", name.body);
 
         let new_name = format!("Server {i}").try_into().unwrap();
         println!("Set name ({new_name:?})...");
