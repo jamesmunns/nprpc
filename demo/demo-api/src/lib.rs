@@ -150,7 +150,7 @@ interface! {
 autobuffer!(BorrowBuf, borrow);
 
 // TODO: I think the syntax for proxying could work by overriding
-// `Server::process_one`, something like:
+// `Server::dispatch_one`, something like:
 //
 // impl borrow::Server for ServerImpl {
 //     proxy! {
@@ -243,7 +243,7 @@ mod test {
         let mut cli = TestClient::new(Box::new(move |raw, out| {
             // TODO: if the server errors here, we should reserialize the error
             // and put that back into `out`
-            Ok(<ServerImpl as composite::Server>::process_one(&mut x, raw, out).unwrap())
+            Ok(<ServerImpl as composite::Server>::dispatch_one(&mut x, raw, out).unwrap())
         }));
 
         let res = cli
@@ -262,7 +262,7 @@ mod test {
         // just shuttles responses into and out of it (instead of transiting over
         // a wire).
         let mut cli = TestClient::new(Box::new(move |raw, out| {
-            Ok(<ServerImpl as composite::Server>::process_one(&mut x, raw, out).unwrap())
+            Ok(<ServerImpl as composite::Server>::dispatch_one(&mut x, raw, out).unwrap())
         }));
 
         let res = cli.mult_two(&200).unwrap();
@@ -280,7 +280,7 @@ mod test {
     pub fn exercise_borrowed() {
         let mut x = ServerImpl;
         let mut cli = TestClient::new(Box::new(move |raw, out| {
-            Ok(<ServerImpl as composite::Server>::process_one(&mut x, raw, out).unwrap())
+            Ok(<ServerImpl as composite::Server>::dispatch_one(&mut x, raw, out).unwrap())
         }));
 
         let res = cli

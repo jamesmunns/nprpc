@@ -193,7 +193,7 @@ macro_rules! interface {
                 /// This method is the prime dispatcher. It takes a processed header and raw body,
                 /// and dispatches it to a method if there is a matching one, otherwise returning
                 /// Err(Unknown) if the key didn't match.
-                fn process_one<'buf>(
+                fn dispatch_one<'buf>(
                     &mut self,
                     req_raw: RequestRaw<'_>,
                     output: &'buf mut [u8],
@@ -203,13 +203,6 @@ macro_rules! interface {
                         $crate::macros::assert_unique(keys::ALL_KEYS),
                         concat!("key collision in interface `", stringify!($mod_name), "`"),
                     );
-
-                    if req_raw.hdr.method != Method::Request {
-                        return Err($crate::ServerError::RequestWrongMethod);
-                    }
-                    if req_raw.hdr.version != 0 {
-                        return Err($crate::ServerError::RequestVersionMismatch);
-                    }
 
                     // Dispatch based on the received key. We trampoline through a monomorphized
                     // version of the `process_endpoint_request` function, which handles the
@@ -236,36 +229,10 @@ macro_rules! interface {
                     &mut self,
                     backend: &mut B,
                 ) -> Result<(), $crate::io::server::ServerIoError<<B::Io as $crate::io::server::Io>::Error>> {
-                    use $crate::io::Storage;
-                    use $crate::io::server::Io;
-                    let (sto, intfc) = backend.parts();
-                    let $crate::io::StorageView { rqst_buf, resp_buf } = sto.buffers();
-
-                    // If we got a fatal wire error, return it with ?
-                    // If we got no error but no packet, nothing to do
-                    let Some(frame) = intfc.recv_one_frame_raw(rqst_buf)? else {
-                        return Ok(());
-                    };
-
-                    let Ok((hdr, remain)) = postcard::take_from_bytes::<$crate::wire::Header>(frame.raw) else {
-                        return intfc.send_one_error(frame.meta, None, $crate::wire::WireError::SERVER_BAD_HEADER, resp_buf);
-                    };
-
-                    // TODO: Should we be checking version and stuff here? process_one does
-                    // that now
-                    let rqst_raw = $crate::RequestRaw {
-                        hdr: hdr.clone(),
-                        rqst: remain,
-                    };
-
-                    let res = self.process_one(rqst_raw, resp_buf);
-                    match res {
-                        Ok(outgoing) => intfc.send_one_frame_raw($crate::io::server::RawIoFrame {
-                            meta: frame.meta,
-                            raw: outgoing,
-                        }),
-                        Err(e) => intfc.send_one_error(frame.meta, Some(hdr), e.into(), resp_buf),
-                    }
+                    $crate::io::server::serve_one_with_dispatcher::<B>(
+                        backend,
+                        |rqst_raw, resp_buf| self.dispatch_one(rqst_raw, resp_buf)
+                    )
                 }
             }
 
@@ -346,7 +313,7 @@ macro_rules! compose_interfaces {
             }
 
             pub trait Server {
-                fn process_one<'buf>(
+                fn dispatch_one<'buf>(
                     &mut self,
                     req_raw: $crate::RequestRaw<'_>,
                     output: &'buf mut [u8],
@@ -356,36 +323,10 @@ macro_rules! compose_interfaces {
                     &mut self,
                     backend: &mut B,
                 ) -> Result<(), $crate::io::server::ServerIoError<<B::Io as $crate::io::server::Io>::Error>> {
-                    use $crate::io::Storage;
-                    use $crate::io::server::Io;
-                    let (sto, intfc) = backend.parts();
-                    let $crate::io::StorageView { rqst_buf, resp_buf } = sto.buffers();
-
-                    // If we got a fatal wire error, return it with ?
-                    // If we got no error but no packet, nothing to do
-                    let Some(frame) = intfc.recv_one_frame_raw(rqst_buf)? else {
-                        return Ok(());
-                    };
-
-                    let Ok((hdr, remain)) = postcard::take_from_bytes::<$crate::wire::Header>(frame.raw) else {
-                        return intfc.send_one_error(frame.meta, None, $crate::wire::WireError::SERVER_BAD_HEADER, resp_buf);
-                    };
-
-                    // TODO: Should we be checking version and stuff here? process_one does
-                    // that now
-                    let rqst_raw = $crate::RequestRaw {
-                        hdr: hdr.clone(),
-                        rqst: remain,
-                    };
-
-                    let res = self.process_one(rqst_raw, resp_buf);
-                    match res {
-                        Ok(outgoing) => intfc.send_one_frame_raw($crate::io::server::RawIoFrame {
-                            meta: frame.meta,
-                            raw: outgoing,
-                        }),
-                        Err(e) => intfc.send_one_error(frame.meta, Some(hdr), e.into(), resp_buf),
-                    }
+                    $crate::io::server::serve_one_with_dispatcher::<B>(
+                        backend,
+                        |rqst_raw, resp_buf| self.dispatch_one(rqst_raw, resp_buf)
+                    )
                 }
             }
 
@@ -404,7 +345,7 @@ macro_rules! compose_interfaces {
             // server_impl! {
             //      impl composite::Server for ServerImpl {
             //          // These are handled by ServerImpl's normal impls, and
-            //          // calls `process_one` like we do in this macro below
+            //          // calls `dispatch_one` like we do in this macro below
             //          crate::a => self,
             //          crate::b => self,
             //
@@ -420,7 +361,7 @@ macro_rules! compose_interfaces {
             where
                 $(T: $($segment)::+::Server,)*
             {
-                fn process_one<'buf>(
+                fn dispatch_one<'buf>(
                     &mut self,
                     req_raw: $crate::RequestRaw<'_>,
                     output: &'buf mut [u8],
@@ -440,7 +381,7 @@ macro_rules! compose_interfaces {
                         //
                         // TODO: j/k, that causes borrow errors?
                         if $($segment)::+::keys::ALL_KEYS.contains(&req_raw.hdr.key) {
-                            return <Self as $($segment)::+::Server>::process_one(self, req_raw, output);
+                            return <Self as $($segment)::+::Server>::dispatch_one(self, req_raw, output);
                         }
                     )*
 

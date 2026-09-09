@@ -8,7 +8,7 @@ use serde::Serialize;
 use crate::{
     Request, RequestRaw,
     interface::Endpoint,
-    io::Storage,
+    io::{Storage, StorageView},
     wire::{Header, Method, WireError},
 };
 
@@ -139,6 +139,45 @@ pub trait Backend {
     type Storage: Storage;
     type Io: Io;
     fn parts(&mut self) -> (&mut Self::Storage, &mut Self::Io);
+}
+
+pub fn serve_one_with_dispatcher<B: Backend>(
+    backend: &mut B,
+    dispatcher: impl for<'a> FnOnce(RequestRaw<'_>, &'a mut [u8]) -> Result<&'a [u8], ServerError>,
+) -> Result<(), ServerIoError<<B::Io as Io>::Error>> {
+    let (sto, intfc) = backend.parts();
+    let StorageView { rqst_buf, resp_buf } = sto.buffers();
+
+    // If we got a fatal wire error, return it with ?
+    // If we got no error but no packet, nothing to do
+    let Some(frame) = intfc.recv_one_frame_raw(rqst_buf)? else {
+        return Ok(());
+    };
+
+    let Ok((hdr, remain)) = postcard::take_from_bytes::<Header>(frame.raw) else {
+        return intfc.send_one_error(frame.meta, None, WireError::SERVER_BAD_HEADER, resp_buf);
+    };
+
+    if hdr.method != Method::Request {
+        return Err(ServerIoError::Server(ServerError::RequestWrongMethod));
+    }
+    if hdr.version != 0 {
+        return Err(ServerIoError::Server(ServerError::RequestVersionMismatch));
+    }
+
+    let rqst_raw = RequestRaw {
+        hdr: hdr.clone(),
+        rqst: remain,
+    };
+
+    let res = dispatcher(rqst_raw, resp_buf);
+    match res {
+        Ok(outgoing) => intfc.send_one_frame_raw(RawIoFrame {
+            meta: frame.meta,
+            raw: outgoing,
+        }),
+        Err(e) => intfc.send_one_error(frame.meta, Some(hdr), e.into(), resp_buf),
+    }
 }
 
 pub fn process_endpoint_request<'req, 'resp, 'out, E: Endpoint>(
