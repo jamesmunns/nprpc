@@ -1,7 +1,24 @@
 [package]
 name = "nprpc"
-version = "0.1.0"
+version = "1.0.0"
+authors = ["James Munns <me@jamesmunns.com>"]
 edition = "2024"
+readme = "README.md"
+repository = "https://github.com/jamesmunns/nprpc"
+description = "It's not Postcard-RPC"
+license = "MPL-2.0"
+categories = [
+    "embedded",
+    "no-std",
+]
+keywords = [
+    "serde",
+]
+documentation = "https://docs.rs/nprpc/"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 postcard.workspace = true
