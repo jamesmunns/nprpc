@@ -1,6 +1,6 @@
 //! Items relevant for server and server operations
 
-use core::fmt::Debug;
+use core::{fmt::Debug, ops::ControlFlow};
 
 use crate::{
     Request, RequestRaw,
@@ -137,6 +137,17 @@ pub trait Backend {
     fn parts(&mut self) -> (&mut Self::Storage, &mut Self::Io);
 }
 
+/// The outcome of a `Server::try_dispatch_one` call.
+///
+/// You don't usually need to touch this, and should prefer using `dispatch_one`
+/// instead, which returns a `Result`.
+///
+/// * `Break`: the request was for one of the server's methods. Contains the
+///   serialized response frame, or the error that occurred while handling it.
+/// * `Continue`: the request was not for any of the server's methods. Contains
+///   the untouched output buffer, so the request can be offered elsewhere.
+pub type Dispatched<'buf> = ControlFlow<Result<&'buf [u8], ServerError>, &'buf mut [u8]>;
+
 /// What a call to `serve_one` did.
 ///
 /// Returned by [`serve_one_with_dispatcher`], and by the `Server::serve_one`
@@ -210,6 +221,7 @@ pub fn serve_one_with_dispatcher<B: Backend>(
 
 /// Handles the deserialization + serialization details when the specific method
 /// has been selected to be dispatched to.
+#[inline]
 pub fn process_method_request<'rqst, 'resp, 'out, M: Method, F>(
     rqst_raw: RequestRaw<'rqst>,
     out: &'out mut [u8],
@@ -240,16 +252,26 @@ where
     let resp = func(rqst);
     // The `'here` lifetime could end here.
 
-    // Serialize response
-    let hedr = Header {
-        op: Operation::Response,
-        ..*hedr
-    };
-    let remain = hedr.write_to(out).ok_or(ServerError::ResponseSerialize(
-        postcard::Error::SerializeBufferFull,
-    ))?;
+    // Avoid monomorphizing header writes
+    let remain = write_response_header(hedr, out)?;
     let body_len = postcard::to_slice(&resp, remain)
         .map_err(ServerError::ResponseSerialize)?
         .len();
     Ok(&out[..HEADER_LEN + body_len])
+}
+
+/// Writes the response header for a given request header to the start of
+/// `out`, returning the remaining bytes.
+#[inline(never)]
+fn write_response_header<'a>(
+    rqst_hedr: &Header,
+    out: &'a mut [u8],
+) -> Result<&'a mut [u8], ServerError> {
+    let hedr = Header {
+        op: Operation::Response,
+        ..*rqst_hedr
+    };
+    hedr.write_to(out).ok_or(ServerError::ResponseSerialize(
+        postcard::Error::SerializeBufferFull,
+    ))
 }

@@ -206,13 +206,20 @@ macro_rules! interface {
                 )*
 
                 /// This method is the prime dispatcher. It takes a processed header and raw body,
-                /// and dispatches it to a method if there is a matching one, otherwise returning
-                /// Err(Unknown) if the key didn't match.
-                fn dispatch_one<'resp>(
+                /// and dispatches it to a method if there is a matching one.
+                ///
+                /// * `Break`: the key matched one of our methods. Contains the serialized
+                ///   response, or the error that occurred while handling the request.
+                /// * `Continue`: the key didn't match any of our methods. The untouched
+                ///   `output` buffer is handed back, so the caller can offer the request to
+                ///   another interface. This is used by [`compose_interfaces!`].
+                ///
+                /// [`compose_interfaces!`]: crate::compose_interfaces
+                fn try_dispatch_one<'resp>(
                     &mut self,
                     req_raw: RequestRaw<'_>,
                     output: &'resp mut [u8],
-                ) -> Result<&'resp [u8], $crate::ServerError> {
+                ) -> $crate::io::server::Dispatched<'resp> {
                     // This block ensures that there are no key collisions in all methods
                     const _: () = assert!(
                         $crate::macros::assert_unique(keys::ALL_KEYS),
@@ -224,20 +231,44 @@ macro_rules! interface {
                     // _request` function, which handles the
                     // common deserialize, process, serialize portion of the code. This is
                     // stamped out on a per-method basis.
-                    match req_raw.hedr.key {
-                        $(
-                            $(#[cfg($mthd_cfg)])?
-                            <methods::$mthd as $crate::interface::Method>::KEY => {
-                                $crate::io::server::process_method_request::<methods::$mthd, _>(
-                                    req_raw,
-                                    output,
-                                    |rqst| <Self as Server>::$mthd(self, rqst)
-                                )
+                    //
+                    // Keys are compared as `u64`s: matching on `Key` (a `[u8; 8]`)
+                    // patterns can compile to a byte-wise decision tree, which is
+                    // less performant at the time of writing. Using `match` instead
+                    // of a list of `ifs` seems to make no code size difference.
+                    let key = u64::from_le_bytes(req_raw.hedr.key.to_bytes());
+                    $(
+                        $(#[cfg($mthd_cfg)])?
+                        {
+                            const KEY: u64 = u64::from_le_bytes(
+                                <methods::$mthd as $crate::interface::Method>::KEY.to_bytes()
+                            );
+                            if key == KEY {
+                                return ::core::ops::ControlFlow::Break(
+                                    $crate::io::server::process_method_request::<methods::$mthd, _>(
+                                        req_raw,
+                                        output,
+                                        |rqst| <Self as Server>::$mthd(self, rqst)
+                                    )
+                                );
                             }
-                        )*
+                        }
+                    )*
 
-                        // None of the keys matched, return an error.
-                        _ => Err($crate::ServerError::UnknownMethod),
+                    // None of the keys matched, give the output buffer back.
+                    ::core::ops::ControlFlow::Continue(output)
+                }
+
+                /// Like [`Server::try_dispatch_one`], but returns `Err(UnknownMethod)` if
+                /// the key didn't match.
+                fn dispatch_one<'resp>(
+                    &mut self,
+                    req_raw: RequestRaw<'_>,
+                    output: &'resp mut [u8],
+                ) -> Result<&'resp [u8], $crate::ServerError> {
+                    match self.try_dispatch_one(req_raw, output) {
+                        ::core::ops::ControlFlow::Break(res) => res,
+                        ::core::ops::ControlFlow::Continue(_) => Err($crate::ServerError::UnknownMethod),
                     }
                 }
 
@@ -356,11 +387,28 @@ macro_rules! compose_interfaces {
             }
 
             pub trait Server {
+                /// Dispatches to the first composed interface with a matching method.
+                ///
+                /// Returns `Continue` with the untouched `output` buffer if the key
+                /// didn't match a method of any of the composed interfaces.
+                fn try_dispatch_one<'buf>(
+                    &mut self,
+                    req_raw: $crate::RequestRaw<'_>,
+                    output: &'buf mut [u8],
+                ) -> $crate::io::server::Dispatched<'buf>;
+
+                /// Like [`Server::try_dispatch_one`], but returns `Err(UnknownMethod)` if
+                /// the key didn't match.
                 fn dispatch_one<'buf>(
                     &mut self,
                     req_raw: $crate::RequestRaw<'_>,
                     output: &'buf mut [u8],
-                ) -> Result<&'buf [u8], $crate::ServerError>;
+                ) -> Result<&'buf [u8], $crate::ServerError> {
+                    match self.try_dispatch_one(req_raw, output) {
+                        ::core::ops::ControlFlow::Break(res) => res,
+                        ::core::ops::ControlFlow::Continue(_) => Err($crate::ServerError::UnknownMethod),
+                    }
+                }
 
                 /// Receive and serve (at most) one request from the backend.
                 ///
@@ -423,11 +471,11 @@ macro_rules! compose_interfaces {
             where
                 $(T: $($segment)::+::Server,)*
             {
-                fn dispatch_one<'buf>(
+                fn try_dispatch_one<'buf>(
                     &mut self,
                     req_raw: $crate::RequestRaw<'_>,
                     output: &'buf mut [u8],
-                ) -> Result<&'buf [u8], $crate::ServerError> {
+                ) -> $crate::io::server::Dispatched<'buf> {
                     // Check all the merged keys to make sure that none of the composed
                     // methods have a collision
                     const _: () = assert!(
@@ -438,28 +486,21 @@ macro_rules! compose_interfaces {
                     $(
                         // We know that all keys are unique, so instead of pre-checking whether a
                         // sub-interface can handle a request, we just give it to each sub-interface
-                        // one at a time until one responds with a non-Unknown result, or we have
-                        // exhausted all outcomes.
+                        // one at a time until one handles it, or we have exhausted all of them.
                         //
-                        // TODO: j/k, that causes borrow errors. Turns out this is NLL problem case #3:
+                        // A sub-interface that doesn't handle the request hands the output buffer
+                        // back to us by value. Checking the result of a plain `dispatch_one` for
+                        // `UnknownMethod` instead would keep `output` borrowed on the fallthrough
+                        // path too, which is NLL problem case #3:
                         // https://rust-lang.github.io/rfcs/2094-nll.html#problem-case-3-conditional-control-flow-across-functions
                         // Revisit this once Polonius lands someday.
-                        //
-                        // let res = <Self as $($segment)::+::Server>::dispatch_one(self, req_raw, output);
-                        // if res != Err($crate::ServerError::UnknownMethod) {
-                        //     return res;
-                        // }
-                        //
-                        // For now, we end up checking the keys twice, here in a `contains` check, and then
-                        // inside dispatch in the form of the `match` statement. Slight perf bummer, but
-                        // at least on hubris the number of keys should be reasonably small (and we early
-                        // return if keys aren't similar).
-                        if $($segment)::+::keys::ALL_KEYS.contains(&req_raw.hedr.key) {
-                            return <Self as $($segment)::+::Server>::dispatch_one(self, req_raw, output);
-                        }
+                        let output = match <Self as $($segment)::+::Server>::try_dispatch_one(self, req_raw, output) {
+                            ::core::ops::ControlFlow::Break(res) => return ::core::ops::ControlFlow::Break(res),
+                            ::core::ops::ControlFlow::Continue(output) => output,
+                        };
                     )*
 
-                    Err($crate::ServerError::UnknownMethod)
+                    ::core::ops::ControlFlow::Continue(output)
                 }
             }
         }

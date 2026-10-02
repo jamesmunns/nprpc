@@ -293,6 +293,46 @@ mod test {
     }
 
     #[test]
+    pub fn composite_dispatch() {
+        use nprpc::{
+            RequestRaw, ServerError,
+            interface::Method,
+            wire::{Header, WIRE_VERSION},
+        };
+
+        let mut x = ServerImpl;
+        let mut out = [0u8; 32];
+        let mut body = [0u8; 8];
+        let body = postcard::to_slice(&4u32, &mut body).unwrap();
+
+        // `two` is not the first composed interface, so `basic` has to pass
+        // on the request (and the output buffer) first.
+        let hedr = Header {
+            version: WIRE_VERSION,
+            op: Operation::Request,
+            seqno: 7,
+            key: two::methods::one_more_thing::KEY,
+        };
+        let raw = RequestRaw { hedr: &hedr, body };
+        let resp = <ServerImpl as composite::Server>::dispatch_one(&mut x, raw, &mut out).unwrap();
+        let (resp_hedr, resp_body) = Header::read_from(resp).unwrap();
+        assert_eq!(resp_hedr.op, Operation::Response);
+        assert_eq!(resp_hedr.seqno, 7);
+        assert!(postcard::from_bytes::<bool>(resp_body).unwrap());
+
+        // A key that none of the composed interfaces know
+        let hedr = Header {
+            key: unsizable::methods::s2s::KEY,
+            ..hedr
+        };
+        let raw = RequestRaw { hedr: &hedr, body };
+        assert_eq!(
+            <ServerImpl as composite::Server>::dispatch_one(&mut x, raw, &mut out),
+            Err(ServerError::UnknownMethod),
+        );
+    }
+
+    #[test]
     pub fn sizes() {
         println!();
         for k in composite::keys::ALL_KEYS {
