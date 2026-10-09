@@ -96,7 +96,7 @@ fn frame<T: Serialize>(op: Operation, version: u8, key: Key, body: &T) -> Vec<u8
     };
     let mut buf = [0u8; 64];
     let mut out = Vec::new();
-    let remain = hedr.write_to(&mut buf).unwrap();
+    let _remain = hedr.write_to(&mut buf).unwrap();
     out.extend_from_slice(&buf[..HEADER_LEN]);
     out.extend_from_slice(postcard::to_slice(body, &mut buf).unwrap());
     out

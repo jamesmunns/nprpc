@@ -1,6 +1,6 @@
 [package]
 name = "nprpc"
-version = "1.0.0"
+version = "2.0.0"
 authors = ["James Munns <me@jamesmunns.com>"]
 edition = "2024"
 readme = "README.md"
