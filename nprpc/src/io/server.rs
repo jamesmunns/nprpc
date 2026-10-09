@@ -1,17 +1,12 @@
 //! Items relevant for server and server operations
 
 use core::fmt::Debug;
-use postcard::{
-    Serializer,
-    ser_flavors::{Flavor as _, Slice as SerSlice},
-};
-use serde::Serialize;
 
 use crate::{
     Request, RequestRaw,
     interface::Method,
     io::{Storage, StorageView},
-    wire::{Header, Operation, WireError},
+    wire::{HEADER_LEN, Header, Operation, WIRE_VERSION, WireError},
 };
 
 /// Raw frame received from or sent to the [`Io`] implementation.
@@ -111,24 +106,21 @@ pub trait Io {
         resp_buf: &mut [u8],
     ) -> Result<(), ServerIoError<Self::Error>> {
         let hedr = Header {
-            version: 0,
+            version: WIRE_VERSION,
             op: Operation::ErrorResponse,
             seqno: hedr.map(|h| h.seqno).unwrap_or(0),
             key: WireError::KEY,
         };
 
-        let mut out = Serializer {
-            output: SerSlice::new(resp_buf),
-        };
-        hedr.serialize(&mut out)
-            .map_err(ServerError::ResponseSerialize)?;
-        err.serialize(&mut out)
-            .map_err(ServerError::ResponseSerialize)?;
-        // TODO: CRC? Wrapping flavor?
-        let used = out
-            .output
-            .finalize()
-            .map_err(ServerError::ResponseSerialize)?;
+        let remain = hedr
+            .write_to(resp_buf)
+            .ok_or(ServerError::ResponseSerialize(
+                postcard::Error::SerializeBufferFull,
+            ))?;
+        let body_len = postcard::to_slice(&err, remain)
+            .map_err(ServerError::ResponseSerialize)?
+            .len();
+        let used = &resp_buf[..HEADER_LEN + body_len];
 
         let frame = RawIoFrame { meta, raw: used };
 
@@ -183,18 +175,15 @@ pub fn serve_one_with_dispatcher<B: Backend>(
         return Ok(Served::Idle);
     };
 
-    let (hedr, remain) = match postcard::take_from_bytes::<Header>(frame.raw) {
-        Ok(parts) => parts,
-        Err(e) => {
-            let err = ServerError::RequestHeaderDeserialize(e);
-            intfc.send_one_error(frame.meta, None, (&err).into(), resp_buf)?;
-            return Ok(Served::Rejected(err));
-        }
+    let Some((hedr, remain)) = Header::read_from(frame.raw) else {
+        let err = ServerError::RequestHeaderDeserialize(postcard::Error::DeserializeUnexpectedEnd);
+        intfc.send_one_error(frame.meta, None, (&err).into(), resp_buf)?;
+        return Ok(Served::Rejected(err));
     };
 
     let res = if hedr.op != Operation::Request {
         Err(ServerError::RequestWrongOperation)
-    } else if hedr.version != 0 {
+    } else if hedr.version != WIRE_VERSION {
         Err(ServerError::RequestVersionMismatch)
     } else {
         let rqst_raw = RequestRaw {
@@ -252,20 +241,15 @@ where
     // The `'here` lifetime could end here.
 
     // Serialize response
-    let mut out = Serializer {
-        output: SerSlice::new(out),
-    };
     let hedr = Header {
         op: Operation::Response,
         ..*hedr
     };
-    hedr.serialize(&mut out)
-        .map_err(ServerError::ResponseSerialize)?;
-    resp.serialize(&mut out)
-        .map_err(ServerError::ResponseSerialize)?;
-    let used = out
-        .output
-        .finalize()
-        .map_err(ServerError::ResponseSerialize)?;
-    Ok(used)
+    let remain = hedr.write_to(out).ok_or(ServerError::ResponseSerialize(
+        postcard::Error::SerializeBufferFull,
+    ))?;
+    let body_len = postcard::to_slice(&resp, remain)
+        .map_err(ServerError::ResponseSerialize)?
+        .len();
+    Ok(&out[..HEADER_LEN + body_len])
 }

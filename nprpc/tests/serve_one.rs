@@ -2,11 +2,12 @@
 
 use postcard_schema_ng::{key::Key, max_len::MaxLenStr};
 
+use nprpc::interface;
 use nprpc::{
-    Request, Served, ServerError, ServerIoError, autobuffer, interface,
+    Request, Served, ServerError, ServerIoError, autobuffer,
     interface::Method,
     io::server::{Backend, Io, RawIoFrame},
-    wire::{Header, Operation, WireError},
+    wire::{HEADER_LEN, Header, Operation, WIRE_VERSION, WireError},
 };
 use serde::Serialize;
 
@@ -95,7 +96,8 @@ fn frame<T: Serialize>(op: Operation, version: u8, key: Key, body: &T) -> Vec<u8
     };
     let mut buf = [0u8; 64];
     let mut out = Vec::new();
-    out.extend_from_slice(postcard::to_slice(&hedr, &mut buf).unwrap());
+    let remain = hedr.write_to(&mut buf).unwrap();
+    out.extend_from_slice(&buf[..HEADER_LEN]);
     out.extend_from_slice(postcard::to_slice(body, &mut buf).unwrap());
     out
 }
@@ -121,7 +123,7 @@ fn assert_error_frame(sent: &[Vec<u8>], seqno: u16, expected: WireError) {
     let [sent] = sent else {
         panic!("expected exactly one frame, got {sent:?}");
     };
-    let (hedr, body) = postcard::take_from_bytes::<Header>(sent).unwrap();
+    let (hedr, body) = Header::read_from(sent).unwrap();
     assert_eq!(hedr.op, Operation::ErrorResponse);
     assert_eq!(hedr.seqno, seqno);
     assert_eq!(hedr.key, WireError::KEY);
@@ -137,14 +139,14 @@ fn idle() {
 
 #[test]
 fn responded() {
-    let rqst = frame(Operation::Request, 0, DOUBLE, &21u32);
+    let rqst = frame(Operation::Request, WIRE_VERSION, DOUBLE, &21u32);
     let (res, sent) = serve(Some(rqst));
     assert_eq!(res, Ok(Served::Responded));
 
     let [sent] = sent.as_slice() else {
         panic!("expected exactly one frame, got {sent:?}");
     };
-    let (hedr, body) = postcard::take_from_bytes::<Header>(sent).unwrap();
+    let (hedr, body) = Header::read_from(sent).unwrap();
     assert_eq!(hedr.op, Operation::Response);
     assert_eq!(hedr.seqno, 42);
     assert_eq!(hedr.key, DOUBLE);
@@ -165,7 +167,7 @@ fn bad_header() {
 
 #[test]
 fn unknown_method() {
-    let rqst = frame(Operation::Request, 0, WireError::KEY, &21u32);
+    let rqst = frame(Operation::Request, WIRE_VERSION, WireError::KEY, &21u32);
     let (res, sent) = serve(Some(rqst));
     assert_eq!(res, Ok(Served::Rejected(ServerError::UnknownMethod)));
     assert_error_frame(&sent, 42, WireError::SERVER_UNKNOWN_METHOD);
@@ -175,7 +177,7 @@ fn unknown_method() {
 fn bad_body() {
     // A valid header for `shout`, but the body claims to be a string that
     // is longer than the remaining data.
-    let mut rqst = frame(Operation::Request, 0, SHOUT, &());
+    let mut rqst = frame(Operation::Request, WIRE_VERSION, SHOUT, &());
     rqst.push(4);
     let (res, sent) = serve(Some(rqst));
     assert!(matches!(
@@ -188,7 +190,7 @@ fn bad_body() {
 #[test]
 fn wrong_operation() {
     for op in [Operation::Response, Operation::ErrorResponse] {
-        let rqst = frame(op, 0, DOUBLE, &21u32);
+        let rqst = frame(op, WIRE_VERSION, DOUBLE, &21u32);
         let (res, sent) = serve(Some(rqst));
         assert_eq!(
             res,
@@ -200,7 +202,7 @@ fn wrong_operation() {
 
 #[test]
 fn version_mismatch() {
-    let rqst = frame(Operation::Request, 1, DOUBLE, &21u32);
+    let rqst = frame(Operation::Request, WIRE_VERSION + 1, DOUBLE, &21u32);
     let (res, sent) = serve(Some(rqst));
     assert_eq!(
         res,
@@ -211,8 +213,8 @@ fn version_mismatch() {
 
 #[test]
 fn io_errors_are_errors() {
-    let good = frame(Operation::Request, 0, DOUBLE, &21u32);
-    let bad = frame(Operation::Request, 0, WireError::KEY, &21u32);
+    let good = frame(Operation::Request, WIRE_VERSION, DOUBLE, &21u32);
+    let bad = frame(Operation::Request, WIRE_VERSION, WireError::KEY, &21u32);
     for rqst in [good, bad] {
         let mut backend = TestBackend {
             bufs: Bufs::new(),

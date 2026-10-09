@@ -190,7 +190,7 @@ mod test {
             incoming: &'a mut [u8],
         ) -> Result<&'a [u8], Self::Error> {
             println!("=> {:?}", outgoing);
-            let (hedr, body) = postcard::take_from_bytes::<Header>(outgoing).unwrap();
+            let (hedr, body) = Header::read_from(outgoing).unwrap();
             println!("-> {:?}", hedr.key);
             let raw = RequestRaw { hedr: &hedr, body };
             (self.inner)(raw, incoming)
@@ -299,11 +299,12 @@ mod test {
             println!("{k:?}");
         }
 
-        const H: usize = Header::SCHEMA.max_size().unwrap();
+        const H: usize = nprpc::wire::HEADER_LEN;
         const A: usize = composite::info::INTERFACE_INFO.max_request_size.unwrap();
         const B: usize = composite::info::INTERFACE_INFO.max_response_size.unwrap();
 
-        assert_eq!(H, 13);
+        // Fixed layout: version + op + seqno (u16) + key (8 bytes)
+        assert_eq!(H, 12);
         assert_eq!(A, 46);
         assert_eq!(B, 9);
         // panic to print...

@@ -1,16 +1,10 @@
 use core::fmt::Debug;
-use postcard::{
-    Deserializer, Serializer,
-    de_flavors::Slice as DeSlice,
-    ser_flavors::{Flavor as _, Slice as SerSlice},
-};
-use serde::{Deserialize, Serialize};
 
 use crate::{
     Response,
     interface::Method,
     io::{Storage, StorageView},
-    wire::{Header, Operation},
+    wire::{HEADER_LEN, Header, Operation, WIRE_VERSION},
 };
 
 /// Error with the client
@@ -124,23 +118,19 @@ pub trait Backend {
         // SERIALIZE OUTGOING...
         let hedr_rqst = Header {
             op: Operation::Request,
-            version: 0,
+            version: WIRE_VERSION,
             seqno,
             key: M::KEY,
         };
-        let mut out = Serializer {
-            output: SerSlice::new(rqst_buf),
-        };
-        hedr_rqst
-            .serialize(&mut out)
-            .map_err(ClientError::RequestSerialize)?;
-        rqst.serialize(&mut out)
-            .map_err(ClientError::RequestSerialize)?;
-        // TODO: CRC? Wrapping flavor?
-        let used = out
-            .output
-            .finalize()
-            .map_err(ClientError::RequestSerialize)?;
+        let remain = hedr_rqst
+            .write_to(rqst_buf)
+            .ok_or(ClientError::RequestSerialize(
+                postcard::Error::SerializeBufferFull,
+            ))?;
+        let body_len = postcard::to_slice(rqst, remain)
+            .map_err(ClientError::RequestSerialize)?
+            .len();
+        let used = &rqst_buf[..HEADER_LEN + body_len];
 
         // Exchange...
         let recvd = interface
@@ -148,9 +138,9 @@ pub trait Backend {
             .map_err(ClientIoError::Io)?;
 
         // DESERIALIZE INCOMING
-        let mut inc = Deserializer::from_flavor(DeSlice::new(recvd));
-        let hedr_resp =
-            Header::deserialize(&mut inc).map_err(ClientError::ResponseHeaderDeserialize)?;
+        let (hedr_resp, body) = Header::read_from(recvd).ok_or(
+            ClientError::ResponseHeaderDeserialize(postcard::Error::DeserializeUnexpectedEnd),
+        )?;
 
         // Check that response header matches all the qualities that we
         // expect...
@@ -175,8 +165,8 @@ pub trait Backend {
         }
 
         // Happy with the header, get the body
-        let body =
-            M::Response::deserialize(&mut inc).map_err(ClientError::ResponseBodyDeserialize)?;
+        let body = postcard::from_bytes::<M::Response<'resp>>(body)
+            .map_err(ClientError::ResponseBodyDeserialize)?;
 
         // TODO: Ensure all bytes have been consumed? DeSlice::finalize?
 

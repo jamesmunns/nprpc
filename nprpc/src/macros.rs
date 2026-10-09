@@ -487,8 +487,8 @@ macro_rules! compose_interfaces {
 /// autobuffer!(ApiBufs, example);
 ///
 /// let bufs = ApiBufs::new();
-/// assert_eq!(core::mem::size_of_val(&bufs.rqst_buf), 18);
-/// assert_eq!(core::mem::size_of_val(&bufs.resp_buf), 23);
+/// assert_eq!(core::mem::size_of_val(&bufs.rqst_buf), 17);
+/// assert_eq!(core::mem::size_of_val(&bufs.resp_buf), 22);
 /// ```
 #[macro_export]
 macro_rules! autobuffer {
@@ -500,9 +500,7 @@ macro_rules! autobuffer {
         }
 
         impl $name {
-            const _HDR_SIZE: usize = <$crate::wire::Header as $crate::__private::Schema>::SCHEMA.max_size()
-            .expect("Unable to automatically size buffer. \
-                Header doesn't have a max size.");
+            const _HDR_SIZE: usize = $crate::wire::HEADER_LEN;
             const _RQST_BODY_SIZE: usize = $($segment)::+::info::INTERFACE_INFO.max_request_size
                 .expect("Unable to automatically size buffer. \
                     One or more request types don't have a max size.");
