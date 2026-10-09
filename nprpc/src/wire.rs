@@ -3,6 +3,8 @@
 use postcard_schema_ng::{Schema, key::Key};
 use serde::{Deserialize, Serialize};
 
+use crate::io::server::ServerError;
+
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Copy, Schema)]
 pub enum Operation {
     Request,
@@ -23,7 +25,7 @@ pub struct Header {
     pub key: Key,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Schema)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Schema)]
 pub struct WireError(pub u8);
 
 impl WireError {
@@ -38,15 +40,21 @@ impl WireError {
     pub const KEY: Key = Key::for_path::<Self>("error");
 }
 
-impl From<crate::io::server::ServerError> for WireError {
-    fn from(value: crate::io::server::ServerError) -> Self {
+impl From<&ServerError> for WireError {
+    fn from(value: &ServerError) -> Self {
         match value {
-            crate::ServerError::RequestHeaderDeserialize(_) => Self::SERVER_BAD_HEADER,
-            crate::ServerError::RequestWrongOperation => Self::SERVER_UNEXPECTED_METHOD,
-            crate::ServerError::RequestVersionMismatch => Self::SERVER_VERSION_MISMATCH,
-            crate::ServerError::UnknownMethod => Self::SERVER_UNKNOWN_METHOD,
-            crate::ServerError::RequestBodyDeserialize(_) => Self::SERVER_BAD_BODY,
-            crate::ServerError::ResponseSerialize(_) => Self::SERVER_RESPOND_FAILED,
+            ServerError::RequestHeaderDeserialize(_) => Self::SERVER_BAD_HEADER,
+            ServerError::RequestWrongOperation => Self::SERVER_UNEXPECTED_METHOD,
+            ServerError::RequestVersionMismatch => Self::SERVER_VERSION_MISMATCH,
+            ServerError::UnknownMethod => Self::SERVER_UNKNOWN_METHOD,
+            ServerError::RequestBodyDeserialize(_) => Self::SERVER_BAD_BODY,
+            ServerError::ResponseSerialize(_) => Self::SERVER_RESPOND_FAILED,
         }
+    }
+}
+
+impl From<ServerError> for WireError {
+    fn from(value: ServerError) -> Self {
+        Self::from(&value)
     }
 }

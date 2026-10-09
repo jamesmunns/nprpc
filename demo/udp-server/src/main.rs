@@ -1,7 +1,7 @@
 use std::net::{SocketAddr, UdpSocket};
 
 use nprpc::{
-    ServerIoError, autobuffer,
+    Served, ServerIoError, autobuffer,
     io::{Storage, server::RawIoFrame},
 };
 use postcard_schema_ng::max_len::MaxLenString;
@@ -47,9 +47,10 @@ fn main() -> std::io::Result<()> {
     println!();
 
     loop {
-        let res = <ServerImpl as composite::Server>::serve_one(&mut server, &mut wire);
-        if let Err(e) = res {
-            println!("Err: {e:?}");
+        match <ServerImpl as composite::Server>::serve_one(&mut server, &mut wire) {
+            Ok(Served::Idle | Served::Responded) => {}
+            Ok(Served::Rejected(e)) => println!("Rejected: {e:?}"),
+            Err(e) => println!("Err: {e:?}"),
         }
     }
 }

@@ -74,7 +74,7 @@
 //! #         fn echo(u32) -> u32;
 //! #     }
 //! # }
-//! use nprpc::Request;
+//! use nprpc::{Request, Served};
 //! // From the `example-api` crate above
 //! use example::Server;
 //!
@@ -137,10 +137,17 @@
 //!     let mut wire = WireBackend::new();
 //!     let mut server = ServerImpl::new();
 //!
-//!     // Server one request, typically done in a loop
-//!     let res = server.serve_one(&mut wire);
-//!     if let Err(e) = res {
-//!         println!("Err: {e:?}");
+//!     // Serve one request, typically done in a loop
+//!     match server.serve_one(&mut wire) {
+//!         // Nothing was ready to be served
+//!         Ok(Served::Idle) => {}
+//!         // We got a request, and sent a response
+//!         Ok(Served::Responded) => {}
+//!         // We got a request we couldn't serve, and sent the client an
+//!         // error instead. You may want to log this or drop the client.
+//!         Ok(Served::Rejected(e)) => println!("Rejected: {e:?}"),
+//!         // We failed to receive a request or send a reply
+//!         Err(e) => println!("Err: {e:?}"),
 //!     }
 //! }
 //!
@@ -225,7 +232,7 @@ pub mod io;
 pub mod wire;
 
 pub use io::client::{ClientError, ClientIoError};
-pub use io::server::{ServerError, ServerIoError};
+pub use io::server::{Served, ServerError, ServerIoError};
 
 // TODO: Should the `Key`s we generate also hash the Header and Error type to
 // ensure complete compatibility? Do we consider this part of the versioning?

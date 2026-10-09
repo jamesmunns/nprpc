@@ -96,6 +96,19 @@ pub const fn assert_unique(keys: &[Key]) -> bool {
 ///     }
 /// }
 /// ```
+///
+/// ## Serving
+///
+/// The generated `Server` trait has one required method per interface method,
+/// and a provided `serve_one` method, which receives and serves at most one
+/// request from a [`Backend`]:
+///
+/// ```rust,ignore
+/// fn serve_one<B: Backend>(&mut self, backend: &mut B)
+///     -> Result<Served, ServerIoError<<B::Io as Io>::Error>>;
+/// ```
+///
+/// [`Backend`]: crate::io::server::Backend
 #[macro_export]
 macro_rules! interface {
     (
@@ -228,10 +241,29 @@ macro_rules! interface {
                     }
                 }
 
+                /// Receive and serve (at most) one request from the backend.
+                ///
+                ///
+                /// The returned [`Served`] reports what was done with the request:
+                ///
+                /// * [`Served::Idle`]: no request was ready, nothing was sent.
+                /// * [`Served::Responded`]: a request was dispatched, and its response sent.
+                /// * [`Served::Rejected`]: a frame was received but could not be served the
+                ///   reason is returned as a [`ServerError`], and the client is sent a
+                ///   [`WireError`].
+                ///
+                /// `Err` is only returned when the I/O exchange itself fails.
+                ///
+                /// [`Served`]: crate::io::server::Served
+                /// [`Served::Idle`]: crate::io::server::Served::Idle
+                /// [`Served::Responded`]: crate::io::server::Served::Responded
+                /// [`Served::Rejected`]: crate::io::server::Served::Rejected
+                /// [`ServerError`]: crate::io::server::ServerError
+                /// [`WireError`]: crate::wire::WireError
                 fn serve_one<B: $crate::io::server::Backend>(
                     &mut self,
                     backend: &mut B,
-                ) -> Result<(), $crate::io::server::ServerIoError<<B::Io as $crate::io::server::Io>::Error>> {
+                ) -> Result<$crate::io::server::Served, $crate::io::server::ServerIoError<<B::Io as $crate::io::server::Io>::Error>> {
                     $crate::io::server::serve_one_with_dispatcher::<B>(
                         backend,
                         |rqst_raw, resp_buf| self.dispatch_one(rqst_raw, resp_buf)
@@ -330,10 +362,29 @@ macro_rules! compose_interfaces {
                     output: &'buf mut [u8],
                 ) -> Result<&'buf [u8], $crate::ServerError>;
 
+                /// Receive and serve (at most) one request from the backend.
+                ///
+                /// The returned [`Served`] reports what was done with the request:
+                ///
+                /// * [`Served::Idle`]: no request was ready, nothing was sent.
+                /// * [`Served::Responded`]: a request was dispatched, and its response sent.
+                /// * [`Served::Rejected`]: a frame was received but could not be served the
+                ///   reason is returned as a [`ServerError`], and the client is sent a
+                ///   [`WireError`].
+                ///
+                /// `Err` is only returned when the I/O exchange itself fails.
+                ///
+                /// [`Backend`]: crate::io::server::Backend
+                /// [`Served`]: crate::io::server::Served
+                /// [`Served::Idle`]: crate::io::server::Served::Idle
+                /// [`Served::Responded`]: crate::io::server::Served::Responded
+                /// [`Served::Rejected`]: crate::io::server::Served::Rejected
+                /// [`ServerError`]: crate::io::server::ServerError
+                /// [`WireError`]: crate::wire::WireError
                 fn serve_one<B: $crate::io::server::Backend>(
                     &mut self,
                     backend: &mut B,
-                ) -> Result<(), $crate::io::server::ServerIoError<<B::Io as $crate::io::server::Io>::Error>> {
+                ) -> Result<$crate::io::server::Served, $crate::io::server::ServerIoError<<B::Io as $crate::io::server::Io>::Error>> {
                     $crate::io::server::serve_one_with_dispatcher::<B>(
                         backend,
                         |rqst_raw, resp_buf| self.dispatch_one(rqst_raw, resp_buf)
