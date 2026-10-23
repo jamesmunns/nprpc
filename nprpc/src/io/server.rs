@@ -3,8 +3,7 @@
 use core::{fmt::Debug, ops::ControlFlow};
 
 use crate::{
-    Request, RequestRaw,
-    interface::Method,
+    RequestRaw,
     io::{Storage, StorageView},
     wire::{HEADER_LEN, Header, HeaderError, Operation, WIRE_VERSION, WireError},
 };
@@ -35,6 +34,7 @@ pub enum ServerError {
     /// capable of handling
     ///
     /// [`Key`]: postcard_schema_ng::key::Key
+    /// [`Method`]: crate::interface::Method
     UnknownMethod,
     /// Received a frame and deserialized the header, but failed to deserialize
     /// the request body.
@@ -227,61 +227,4 @@ pub fn serve_one_with_dispatcher<B: Backend>(
             Ok(Served::Rejected(err))
         }
     }
-}
-
-/// Handles the deserialization + serialization details when the specific method
-/// has been selected to be dispatched to.
-#[inline]
-pub fn process_method_request<'rqst, 'resp, 'out, M: Method, F>(
-    rqst_raw: RequestRaw<'rqst>,
-    out: &'out mut [u8],
-    func: F,
-) -> Result<&'out [u8], ServerError>
-where
-    // The 'here lifetime encodes the lifetime of the borrow of the deserialized
-    // request body. The body may contain borrows of the incoming request
-    // buffer, basically `&'here Request<'rqst>` is passed to the dispatcher.
-    //
-    // This is a hrtb lifetime because we choose the lifetime inside of this
-    // function, rather than based on something passed in like 'rqst or 'resp.
-    F: for<'here> FnOnce(Request<'here, M::Request<'rqst>>) -> M::Response<'resp>,
-{
-    let RequestRaw { hedr, body } = rqst_raw;
-
-    // Deserialize
-    let (body, rest): (M::Request<'_>, _) =
-        postcard::take_from_bytes(body).map_err(ServerError::RequestBodyDeserialize)?;
-    if !rest.is_empty() {
-        return Err(ServerError::RequestBodyTrailingBytes);
-    }
-
-    // Process request
-    //
-    // This is where the `'here` lifetime starts, with this borrow of the
-    // deserialized request body.
-    let rqst = Request { hedr, body: &body };
-    let resp = func(rqst);
-    // The `'here` lifetime could end here.
-
-    // Avoid monomorphizing header writes
-    let remain = write_response_header(hedr, out)?;
-    let body_len = postcard::to_slice(&resp, remain)
-        .map_err(ServerError::ResponseSerialize)?
-        .len();
-    Ok(&out[..HEADER_LEN + body_len])
-}
-
-/// Writes the response header for a given request header to the start of
-/// `out`, returning the remaining bytes.
-#[inline(never)]
-fn write_response_header<'a>(
-    rqst_hedr: &Header,
-    out: &'a mut [u8],
-) -> Result<&'a mut [u8], ServerError> {
-    let hedr = Header {
-        op: Operation::Response,
-        ..*rqst_hedr
-    };
-    hedr.write_to(out)
-        .map_err(ServerError::ResponseHeaderSerialize)
 }

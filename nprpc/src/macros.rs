@@ -1,28 +1,5 @@
 //! Declarative macros
 
-use postcard_schema_ng::key::Key;
-
-/// Check whether any duplicates are present in the given list.
-///
-/// Returns `false` if duplicates were found (NOT unique), otherwise returns
-/// `true`.
-pub const fn assert_unique(keys: &[Key]) -> bool {
-    let mut i = 0;
-    while i < keys.len() {
-        let mut j = i + 1;
-        let a = u64::from_le_bytes(keys[i].to_bytes());
-        while j < keys.len() {
-            let b = u64::from_le_bytes(keys[j].to_bytes());
-            if a == b {
-                return false;
-            }
-            j += 1;
-        }
-        i += 1;
-    }
-    true
-}
-
 /// # Interface Definition macro
 ///
 /// This macro is used for defining an **interface**, a set of methods with
@@ -190,8 +167,8 @@ macro_rules! interface {
                 /// Information about the interface, including the list of all methods
                 /// and the max request/response body size (NOT including any headers!).
                 pub const INTERFACE_INFO: InterfaceInfo = InterfaceInfo {
-                    max_request_size: $crate::interface::rqst_body_max_buf_required(ALL_METHOD_INFOS),
-                    max_response_size: $crate::interface::resp_body_max_buf_required(ALL_METHOD_INFOS),
+                    max_request_size: $crate::__private::rqst_body_max_buf_required(ALL_METHOD_INFOS),
+                    max_response_size: $crate::__private::resp_body_max_buf_required(ALL_METHOD_INFOS),
                     methods: ALL_METHOD_INFOS,
                 };
             }
@@ -222,13 +199,12 @@ macro_rules! interface {
                 ) -> $crate::io::server::Dispatched<'resp> {
                     // This block ensures that there are no key collisions in all methods
                     const _: () = assert!(
-                        $crate::macros::assert_unique(keys::ALL_KEYS),
+                        $crate::__private::assert_unique(keys::ALL_KEYS),
                         concat!("key collision in interface `", stringify!($mod_name), "`"),
                     );
 
                     // Dispatch based on the received key. We trampoline through a monomorphized
-                    // version of the `process_method
-                    // _request` function, which handles the
+                    // version of the `process_method_request` function, which handles the
                     // common deserialize, process, serialize portion of the code. This is
                     // stamped out on a per-method basis.
                     //
@@ -245,7 +221,7 @@ macro_rules! interface {
                             );
                             if key == KEY {
                                 return ::core::ops::ControlFlow::Break(
-                                    $crate::io::server::process_method_request::<methods::$mthd, _>(
+                                    $crate::__private::process_method_request::<methods::$mthd, _>(
                                         req_raw,
                                         output,
                                         |rqst| <Self as Server>::$mthd(self, rqst)
@@ -361,7 +337,7 @@ macro_rules! compose_interfaces {
                 use $crate::__private::Key;
                 use super::info::ALL_METHOD_INFOS;
                 const LEN: usize = ALL_METHOD_INFOS.len();
-                pub const ALL_KEYS: &[Key] = &$crate::interface::extract_keys::<LEN>(ALL_METHOD_INFOS);
+                pub const ALL_KEYS: &[Key] = &$crate::__private::extract_keys::<LEN>(ALL_METHOD_INFOS);
             }
 
             pub mod info {
@@ -374,14 +350,14 @@ macro_rules! compose_interfaces {
                             $($segment)::+::info::INTERFACE_INFO.methods,
                         )*
                     ];
-                    const N: usize = $crate::interface::total_len(SETS);
-                    const ARR: [MethodInfo; N] = $crate::interface::flatten(SETS);
+                    const N: usize = $crate::__private::total_len(SETS);
+                    const ARR: [MethodInfo; N] = $crate::__private::flatten(SETS);
                     &ARR
                 };
 
                 pub const INTERFACE_INFO: InterfaceInfo = InterfaceInfo {
-                    max_request_size: $crate::interface::rqst_body_max_buf_required(ALL_METHOD_INFOS),
-                    max_response_size: $crate::interface::resp_body_max_buf_required(ALL_METHOD_INFOS),
+                    max_request_size: $crate::__private::rqst_body_max_buf_required(ALL_METHOD_INFOS),
+                    max_response_size: $crate::__private::resp_body_max_buf_required(ALL_METHOD_INFOS),
                     methods: ALL_METHOD_INFOS,
                 };
             }
@@ -479,7 +455,7 @@ macro_rules! compose_interfaces {
                     // Check all the merged keys to make sure that none of the composed
                     // methods have a collision
                     const _: () = assert!(
-                        $crate::macros::assert_unique(keys::ALL_KEYS),
+                        $crate::__private::assert_unique(keys::ALL_KEYS),
                         concat!("key collision in composite interface `", stringify!($mod_name), "`"),
                     );
 

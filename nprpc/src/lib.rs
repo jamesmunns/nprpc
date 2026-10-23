@@ -227,7 +227,8 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
-pub mod macros;
+mod macro_support;
+mod macros;
 
 pub mod interface;
 pub mod io;
@@ -246,6 +247,8 @@ pub mod __private {
     pub use postcard_schema_ng::key::Key;
     pub use postcard_schema_ng::schema::DataModelType;
     pub use serde::{Deserialize, Serialize};
+
+    pub use crate::macro_support::*;
 }
 
 /// Borrowed view of a request
