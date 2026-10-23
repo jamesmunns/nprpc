@@ -188,6 +188,18 @@ fn bad_body() {
 }
 
 #[test]
+fn reject_trailing_bytes() {
+    let mut rqst = frame(Operation::Request, WIRE_VERSION, DOUBLE, &21u32);
+    rqst.push(0);
+    let (res, sent) = serve(Some(rqst));
+    assert_eq!(
+        res,
+        Ok(Served::Rejected(ServerError::RequestBodyTrailingBytes))
+    );
+    assert_error_frame(&sent, 42, WireError::SERVER_BAD_BODY);
+}
+
+#[test]
 fn wrong_operation() {
     for op in [Operation::Response, Operation::ErrorResponse] {
         let rqst = frame(op, WIRE_VERSION, DOUBLE, &21u32);

@@ -32,6 +32,9 @@ pub enum ClientError {
     /// Received a reasonable `Header`, but unable to deserialize the body
     /// of the request.
     ResponseBodyDeserialize(postcard::Error),
+    /// Deserialized the response body, but the frame contained extra bytes
+    /// after it.
+    ResponseBodyTrailingBytes,
     /// The client and server disagreed on the protocol version
     ResponseVersionMismatch,
     /// The resposne contained an unexpected Operation field.
@@ -161,8 +164,7 @@ pub trait Backend {
             if hedr_resp.key != WireError::KEY {
                 return Err(ClientError::ResponseKeyMismatch.into());
             }
-            let err = postcard::from_bytes::<WireError>(body)
-                .map_err(ClientError::ResponseBodyDeserialize)?;
+            let err = take_body::<WireError>(body)?;
             return Err(ClientError::Server(err).into());
         }
         if hedr_resp.op != Operation::Response {
@@ -176,14 +178,21 @@ pub trait Backend {
         }
 
         // Happy with the header, get the body
-        let body = postcard::from_bytes::<M::Response<'resp>>(body)
-            .map_err(ClientError::ResponseBodyDeserialize)?;
-
-        // TODO: Ensure all bytes have been consumed? DeSlice::finalize?
+        let body = take_body::<M::Response<'resp>>(body)?;
 
         Ok(Response {
             hedr: hedr_resp,
             body,
         })
     }
+}
+
+/// Deserializes a response body, which must use all of `body`
+fn take_body<'de, T: serde::Deserialize<'de>>(body: &'de [u8]) -> Result<T, ClientError> {
+    let (body, rest) =
+        postcard::take_from_bytes::<T>(body).map_err(ClientError::ResponseBodyDeserialize)?;
+    if !rest.is_empty() {
+        return Err(ClientError::ResponseBodyTrailingBytes);
+    }
+    Ok(body)
 }

@@ -38,6 +38,9 @@ pub enum ServerError {
     /// Received a frame and deserialized the header, but failed to deserialize
     /// the request body.
     RequestBodyDeserialize(postcard::Error),
+    /// Deserialized the request body, but the frame contained extra bytes
+    /// after it.
+    RequestBodyTrailingBytes,
     /// Failed to serialize a response after processing a request.
     ResponseSerialize(postcard::Error),
 }
@@ -239,10 +242,11 @@ where
     let RequestRaw { hedr, body } = rqst_raw;
 
     // Deserialize
-    let body: M::Request<'_> =
-        postcard::from_bytes(body).map_err(ServerError::RequestBodyDeserialize)?;
-
-    // TODO: ensure all bytes consumed?
+    let (body, rest): (M::Request<'_>, _) =
+        postcard::take_from_bytes(body).map_err(ServerError::RequestBodyDeserialize)?;
+    if !rest.is_empty() {
+        return Err(ServerError::RequestBodyTrailingBytes);
+    }
 
     // Process request
     //

@@ -113,6 +113,7 @@ impl From<&ServerError> for WireError {
             ServerError::RequestVersionMismatch => Self::SERVER_VERSION_MISMATCH,
             ServerError::UnknownMethod => Self::SERVER_UNKNOWN_METHOD,
             ServerError::RequestBodyDeserialize(_) => Self::SERVER_BAD_BODY,
+            ServerError::RequestBodyTrailingBytes => Self::SERVER_BAD_BODY,
             ServerError::ResponseSerialize(_) => Self::SERVER_RESPOND_FAILED,
         }
     }

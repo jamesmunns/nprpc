@@ -92,6 +92,32 @@ fn response() {
 }
 
 #[test]
+fn reject_trailing_bytes() {
+    let mut reply = frame(Operation::Response, 42, DOUBLE, &42u32);
+    reply.push(0);
+    assert_eq!(
+        call(reply),
+        Err(ClientIoError::Client(
+            ClientError::ResponseBodyTrailingBytes
+        ))
+    );
+
+    let mut reply = frame(
+        Operation::ErrorResponse,
+        42,
+        WireError::KEY,
+        &WireError::SERVER_UNKNOWN_METHOD,
+    );
+    reply.push(0);
+    assert_eq!(
+        call(reply),
+        Err(ClientIoError::Client(
+            ClientError::ResponseBodyTrailingBytes
+        ))
+    );
+}
+
+#[test]
 fn error_response() {
     let reply = frame(
         Operation::ErrorResponse,
