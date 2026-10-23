@@ -416,11 +416,8 @@ macro_rules! compose_interfaces {
                 }
             }
 
-            // TODO: Remove this blanket impl (or make optional) to allow for
-            // proxying here?
-            //
-            // UPDATE: I think we keep this as-is, because it's only implemented
-            // for T's that implement ALL sub-server traits.
+            // This blanket impl doesn't prevent proxying, because it's only
+            // implemented for T's that implement ALL sub-server traits.
             //
             // If we have three interfaces A, B, C; and the server implements
             // A and B as a server, and wants to proxy C, it *won't* automatically

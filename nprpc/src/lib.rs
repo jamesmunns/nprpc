@@ -237,9 +237,6 @@ pub mod wire;
 pub use io::client::{ClientError, ClientIoError};
 pub use io::server::{Served, ServerError, ServerIoError};
 
-// TODO: Should the `Key`s we generate also hash the Header and Error type to
-// ensure complete compatibility? Do we consider this part of the versioning?
-
 /// Not covered by semver, re-exported items for external macros
 #[doc(hidden)]
 pub mod __private {
