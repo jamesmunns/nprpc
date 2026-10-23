@@ -25,6 +25,9 @@ pub struct RawIoFrame<'data, T> {
 #[non_exhaustive]
 pub enum ServerError {
     /// Received a frame, but failed to deserialize a [`Header`] from the frame.
+    ///
+    /// A version mismatch is reported as [`ServerError::RequestVersionMismatch`]
+    /// instead.
     RequestHeaderDeserialize(HeaderError),
     /// Received a request with an unexpected operation field.
     RequestWrongOperation,
@@ -196,7 +199,10 @@ pub fn serve_one_with_dispatcher<B: Backend>(
     let (hedr, remain) = match Header::read_from(frame.raw) {
         Ok(h) => h,
         Err(e) => {
-            let err = ServerError::RequestHeaderDeserialize(e);
+            let err = match e {
+                HeaderError::UnsupportedVersion(_) => ServerError::RequestVersionMismatch,
+                e => ServerError::RequestHeaderDeserialize(e),
+            };
             intfc.send_one_error(frame.meta, None, (&err).into(), resp_buf)?;
             return Ok(Served::Rejected(err));
         }
@@ -204,8 +210,6 @@ pub fn serve_one_with_dispatcher<B: Backend>(
 
     let res = if hedr.op != Operation::Request {
         Err(ServerError::RequestWrongOperation)
-    } else if hedr.version != WIRE_VERSION {
-        Err(ServerError::RequestVersionMismatch)
     } else {
         let rqst_raw = RequestRaw {
             hedr: &hedr,

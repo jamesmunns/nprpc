@@ -156,7 +156,7 @@ fn responded() {
 #[test]
 fn bad_header() {
     // Too short to contain a header
-    let (res, sent) = serve(Some(Vec::from([0u8, 0])));
+    let (res, sent) = serve(Some(Vec::from([WIRE_VERSION, 0])));
     assert_eq!(
         res,
         Ok(Served::Rejected(ServerError::RequestHeaderDeserialize(
@@ -234,7 +234,19 @@ fn version_mismatch() {
         res,
         Ok(Served::Rejected(ServerError::RequestVersionMismatch))
     );
-    assert_error_frame(&sent, 42, WireError::SERVER_VERSION_MISMATCH);
+    // The rest of the header can't be decoded without knowing the version,
+    // so there is no sequence number to copy
+    assert_error_frame(&sent, 0, WireError::SERVER_VERSION_MISMATCH);
+
+    // The version is checked before the operation
+    let mut rqst = frame(Operation::Request, WIRE_VERSION + 1, DOUBLE, &21u32);
+    rqst[1] = 0xFF;
+    let (res, sent) = serve(Some(rqst));
+    assert_eq!(
+        res,
+        Ok(Served::Rejected(ServerError::RequestVersionMismatch))
+    );
+    assert_error_frame(&sent, 0, WireError::SERVER_VERSION_MISMATCH);
 }
 
 #[test]

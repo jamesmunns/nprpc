@@ -33,6 +33,9 @@ pub enum ClientError {
     RequestSerialize(postcard::Error),
     /// Received a response, but unable to deserialize a header from the
     /// (alleged) response.
+    ///
+    /// A version mismatch is reported as [`ClientError::ResponseVersionMismatch`]
+    /// instead.
     ResponseHeaderDeserialize(HeaderError),
     /// Received a reasonable `Header`, but unable to deserialize the body
     /// of the request.
@@ -147,15 +150,14 @@ pub trait Backend {
             .map_err(ClientIoError::Io)?;
 
         // DESERIALIZE INCOMING
-        let (hedr_resp, body) =
-            Header::read_from(recvd).map_err(ClientError::ResponseHeaderDeserialize)?;
+        let (hedr_resp, body) = Header::read_from(recvd).map_err(|e| match e {
+            HeaderError::UnsupportedVersion(_) => ClientError::ResponseVersionMismatch,
+            e => ClientError::ResponseHeaderDeserialize(e),
+        })?;
 
         // Check that response header matches all the qualities that we
         // expect...
 
-        if hedr_resp.version != hedr_rqst.version {
-            return Err(ClientError::ResponseVersionMismatch.into());
-        }
         // The server replies with an error if it couldn't serve our request.
         // If it couldn't decode our header at all, it doesn't know our
         // sequence number, and uses `0` instead.

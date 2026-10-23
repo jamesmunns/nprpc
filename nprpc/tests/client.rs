@@ -196,3 +196,13 @@ fn bad_header() {
         ))
     );
 }
+
+#[test]
+fn version_mismatch() {
+    let mut reply = frame(Operation::Response, 42, DOUBLE, &42u32);
+    reply[0] = WIRE_VERSION + 1;
+    assert_eq!(
+        call(reply),
+        Err(ClientIoError::Client(ClientError::ResponseVersionMismatch))
+    );
+}

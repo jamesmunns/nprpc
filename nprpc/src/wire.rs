@@ -48,6 +48,8 @@ impl Operation {
 pub enum HeaderError {
     /// The buffer is shorter than [`HEADER_LEN`].
     BufferTooShort,
+    /// The version byte is not [`WIRE_VERSION`].
+    UnsupportedVersion(u8),
     /// The operation byte is not a known [`Operation`].
     UnknownOperation(u8),
 }
@@ -64,6 +66,9 @@ pub enum HeaderError {
 /// | 1      | 1    | `op`              |
 /// | 2      | 2    | `seqno` u16, LE   |
 /// | 4      | 8    | `key` u64, LE     |
+///
+/// The `version` is always the first byte, and is checked before anything
+/// else is decoded, as the rest of the layout may differ between versions.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Header {
     pub version: u8,
@@ -87,7 +92,15 @@ impl Header {
 
     /// Reads a header from the start of `buf`, returning it and the remaining
     /// (body) bytes.
+    ///
+    /// Fails with [`HeaderError::UnsupportedVersion`] if the header is for a
+    /// version other than [`WIRE_VERSION`], before checking anything else.
     pub fn read_from(buf: &[u8]) -> Result<(Self, &[u8]), HeaderError> {
+        match buf.first() {
+            None => return Err(HeaderError::BufferTooShort),
+            Some(&v) if v != WIRE_VERSION => return Err(HeaderError::UnsupportedVersion(v)),
+            Some(_) => {}
+        }
         let (h, rest) = buf
             .split_first_chunk::<HEADER_LEN>()
             .ok_or(HeaderError::BufferTooShort)?;
@@ -178,7 +191,7 @@ mod test {
             Err(HeaderError::BufferTooShort)
         );
         assert_eq!(
-            Header::read_from(&[0u8; HEADER_LEN - 1]),
+            Header::read_from(&[WIRE_VERSION; HEADER_LEN - 1]),
             Err(HeaderError::BufferTooShort)
         );
         // Unknown operation
@@ -188,6 +201,17 @@ mod test {
         assert_eq!(
             Header::read_from(&buf),
             Err(HeaderError::UnknownOperation(3))
+        );
+        // The version is checked first: the rest of the header can't be
+        // decoded without knowing the version.
+        assert_eq!(
+            Header::read_from(&[WIRE_VERSION + 1]),
+            Err(HeaderError::UnsupportedVersion(WIRE_VERSION + 1))
+        );
+        buf[0] = WIRE_VERSION + 1;
+        assert_eq!(
+            Header::read_from(&buf),
+            Err(HeaderError::UnsupportedVersion(WIRE_VERSION + 1))
         );
     }
 }
