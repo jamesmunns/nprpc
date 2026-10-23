@@ -45,7 +45,7 @@ pub enum ClientError {
     ResponseBodyTrailingBytes,
     /// The client and server disagreed on the protocol version
     ResponseVersionMismatch,
-    /// The resposne contained an unexpected Operation field.
+    /// The response contained an unexpected Operation field.
     ResponseBadOperation,
     /// The response contained an unexpected sequence number.
     ResponseBadSeqno,

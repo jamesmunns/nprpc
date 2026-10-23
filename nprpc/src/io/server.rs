@@ -70,7 +70,7 @@ impl<E> From<ServerError> for ServerIoError<E> {
     }
 }
 
-/// The `Io` abstraction for a client
+/// The `Io` abstraction for a server
 ///
 /// This interface is responsible for receiving a request frame from the
 /// client, and sending a response frame.
@@ -107,7 +107,7 @@ pub trait Io {
     /// `WireError::KEY`. If a header was decoded, the sequence number will be
     /// copied from that header, otherwise `0`.
     ///
-    /// The body of the response will be of type `WireError`, and serialied
+    /// The body of the response will be of type `WireError`, and serialized
     /// into the `resp_buf`.
     fn send_one_error(
         &mut self,

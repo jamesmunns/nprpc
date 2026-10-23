@@ -11,7 +11,7 @@
 //!     * Messages are tagged with an eight-byte hash of the method name,
 //!       request schema, and response schema. Hash collisions are caught at
 //!       compile time, and Cool Schemas Never Change.
-//!     * Uses `serde` and `postcard` are used for serialization and
+//!     * Uses `serde` and `postcard` for serialization and
 //!       deserialization.
 //!     * `postcard-dyn` can be used for dynamic ser/de, and transcoding frames
 //!       to/from JSON (Coming Soon™️).
