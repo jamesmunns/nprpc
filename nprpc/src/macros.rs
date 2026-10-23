@@ -328,8 +328,8 @@ macro_rules! compose_interfaces {
         mod: $mod_name:ident,
         interfaces: [
             $(
-                $($segment:ident)::+$(,)?
-            )*
+                $($segment:ident)::+
+            ),* $(,)?
         ]
     ) => {
         pub mod $mod_name {
