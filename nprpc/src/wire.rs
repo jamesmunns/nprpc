@@ -15,7 +15,8 @@ pub const WIRE_VERSION: u8 = 1;
 /// Length of an encoded [`Header`]
 pub const HEADER_LEN: usize = 12;
 
-#[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Copy, Schema)]
+/// The kind of frame, encoded as a single byte in the [`Header`]
+#[derive(Debug, PartialEq, Clone, Copy)]
 #[non_exhaustive]
 pub enum Operation {
     Request,
@@ -24,7 +25,8 @@ pub enum Operation {
 }
 
 impl Operation {
-    const fn to_u8(self) -> u8 {
+    /// The byte used for this operation in an encoded [`Header`]
+    pub const fn to_u8(self) -> u8 {
         match self {
             Operation::Request => 0,
             Operation::Response => 1,
@@ -32,7 +34,9 @@ impl Operation {
         }
     }
 
-    const fn from_u8(v: u8) -> Option<Self> {
+    /// The operation for a byte from an encoded [`Header`], or `None` if
+    /// the byte is not a known operation.
+    pub const fn from_u8(v: u8) -> Option<Self> {
         match v {
             0 => Some(Operation::Request),
             1 => Some(Operation::Response),
