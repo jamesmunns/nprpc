@@ -23,6 +23,7 @@ pub struct RawIoFrame<'data, T> {
 
 /// Server Errors
 #[derive(Debug, PartialEq)]
+#[non_exhaustive]
 pub enum ServerError {
     /// Received a frame, but failed to deserialize a [`Header`] from the frame.
     RequestHeaderDeserialize(postcard::Error),
@@ -47,6 +48,7 @@ pub enum ServerError {
 
 /// Error with the server
 #[derive(Debug, PartialEq)]
+#[non_exhaustive]
 pub enum ServerIoError<E> {
     /// The server failed to produce a frame to send, e.g. when the response
     /// buffer was too small.
@@ -158,6 +160,7 @@ pub type Dispatched<'buf> = ControlFlow<Result<&'buf [u8], ServerError>, &'buf m
 /// [`compose_interfaces!`](crate::compose_interfaces).
 #[derive(Debug, PartialEq)]
 #[must_use = "a `Rejected` request may indicate a misbehaving client"]
+#[non_exhaustive]
 pub enum Served {
     /// The [`Io`] had no request ready, nothing was sent.
     Idle,

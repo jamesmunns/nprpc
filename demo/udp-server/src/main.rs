@@ -50,6 +50,7 @@ fn main() -> std::io::Result<()> {
         match <ServerImpl as composite::Server>::serve_one(&mut server, &mut wire) {
             Ok(Served::Idle | Served::Responded) => {}
             Ok(Served::Rejected(e)) => println!("Rejected: {e:?}"),
+            Ok(_) => {}
             Err(e) => println!("Err: {e:?}"),
         }
     }

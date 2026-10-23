@@ -16,6 +16,7 @@ pub const WIRE_VERSION: u8 = 1;
 pub const HEADER_LEN: usize = 12;
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Copy, Schema)]
+#[non_exhaustive]
 pub enum Operation {
     Request,
     Response,

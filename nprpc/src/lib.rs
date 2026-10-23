@@ -146,6 +146,8 @@
 //!         // We got a request we couldn't serve, and sent the client an
 //!         // error instead. You may want to log this or drop the client.
 //!         Ok(Served::Rejected(e)) => println!("Rejected: {e:?}"),
+//!         // `Served` may gain more outcomes in the future
+//!         Ok(_) => {}
 //!         // We failed to receive a request or send a reply
 //!         Err(e) => println!("Err: {e:?}"),
 //!     }

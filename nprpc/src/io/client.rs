@@ -13,6 +13,7 @@ use crate::{
 /// frames), or a `Client` error, if the frame contained invalid or
 /// unexpected data.
 #[derive(Debug, PartialEq)]
+#[non_exhaustive]
 pub enum ClientIoError<E> {
     /// Experienced an error while performing protocol operations.
     Client(ClientError),
@@ -23,6 +24,7 @@ pub enum ClientIoError<E> {
 
 /// Client Errors
 #[derive(Debug, PartialEq)]
+#[non_exhaustive]
 pub enum ClientError {
     /// Failed to serialize the request.
     RequestSerialize(postcard::Error),
