@@ -4,7 +4,7 @@ use crate::{
     Response,
     interface::Method,
     io::{Storage, StorageView},
-    wire::{HEADER_LEN, Header, Operation, WIRE_VERSION},
+    wire::{HEADER_LEN, Header, Operation, WIRE_VERSION, WireError},
 };
 
 /// Error with the client
@@ -42,6 +42,9 @@ pub enum ClientError {
     ///
     /// [`Key`]: postcard_schema_ng::key::Key
     ResponseKeyMismatch,
+    /// The server was unable to serve the request, and replied with an
+    /// error instead.
+    Server(WireError),
 }
 
 impl<E> From<ClientError> for ClientIoError<E> {
@@ -148,15 +151,23 @@ pub trait Backend {
         if hedr_resp.version != hedr_rqst.version {
             return Err(ClientError::ResponseVersionMismatch.into());
         }
+        // The server replies with an error if it couldn't serve our request.
+        // If it couldn't decode our header at all, it doesn't know our
+        // sequence number, and uses `0` instead.
+        if hedr_resp.op == Operation::ErrorResponse {
+            if hedr_resp.seqno != hedr_rqst.seqno && hedr_resp.seqno != 0 {
+                return Err(ClientError::ResponseBadSeqno.into());
+            }
+            if hedr_resp.key != WireError::KEY {
+                return Err(ClientError::ResponseKeyMismatch.into());
+            }
+            let err = postcard::from_bytes::<WireError>(body)
+                .map_err(ClientError::ResponseBodyDeserialize)?;
+            return Err(ClientError::Server(err).into());
+        }
         if hedr_resp.op != Operation::Response {
             return Err(ClientError::ResponseBadOperation.into());
         }
-
-        // TODO: We need to handle the "wildcard" error if there was some kind
-        // of fatal wire error where the server wasn't able to decode our
-        // data at all, like with a CRC error or header corruption. In this
-        // case, the seqno and key may not match at all.
-
         if hedr_resp.seqno != hedr_rqst.seqno {
             return Err(ClientError::ResponseBadSeqno.into());
         }
