@@ -4,7 +4,7 @@ use crate::{
     Response,
     interface::Method,
     io::{Storage, StorageView},
-    wire::{HEADER_LEN, Header, Operation, WIRE_VERSION, WireError},
+    wire::{HEADER_LEN, Header, HeaderError, Operation, WIRE_VERSION, WireError},
 };
 
 /// Error with the client
@@ -26,11 +26,14 @@ pub enum ClientIoError<E> {
 #[derive(Debug, PartialEq)]
 #[non_exhaustive]
 pub enum ClientError {
+    /// Failed to serialize the header of the request, e.g. when the request
+    /// buffer was too small.
+    RequestHeaderSerialize(HeaderError),
     /// Failed to serialize the request.
     RequestSerialize(postcard::Error),
     /// Received a response, but unable to deserialize a header from the
     /// (alleged) response.
-    ResponseHeaderDeserialize(postcard::Error),
+    ResponseHeaderDeserialize(HeaderError),
     /// Received a reasonable `Header`, but unable to deserialize the body
     /// of the request.
     ResponseBodyDeserialize(postcard::Error),
@@ -132,9 +135,7 @@ pub trait Backend {
         };
         let remain = hedr_rqst
             .write_to(rqst_buf)
-            .ok_or(ClientError::RequestSerialize(
-                postcard::Error::SerializeBufferFull,
-            ))?;
+            .map_err(ClientError::RequestHeaderSerialize)?;
         let body_len = postcard::to_slice(rqst, remain)
             .map_err(ClientError::RequestSerialize)?
             .len();
@@ -146,9 +147,8 @@ pub trait Backend {
             .map_err(ClientIoError::Io)?;
 
         // DESERIALIZE INCOMING
-        let (hedr_resp, body) = Header::read_from(recvd).ok_or(
-            ClientError::ResponseHeaderDeserialize(postcard::Error::DeserializeUnexpectedEnd),
-        )?;
+        let (hedr_resp, body) =
+            Header::read_from(recvd).map_err(ClientError::ResponseHeaderDeserialize)?;
 
         // Check that response header matches all the qualities that we
         // expect...

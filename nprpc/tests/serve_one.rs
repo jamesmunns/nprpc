@@ -7,7 +7,7 @@ use nprpc::{
     Request, Served, ServerError, ServerIoError, autobuffer,
     interface::Method,
     io::server::{Backend, Io, RawIoFrame},
-    wire::{HEADER_LEN, Header, Operation, WIRE_VERSION, WireError},
+    wire::{HEADER_LEN, Header, HeaderError, Operation, WIRE_VERSION, WireError},
 };
 use serde::Serialize;
 
@@ -157,11 +157,25 @@ fn responded() {
 fn bad_header() {
     // Too short to contain a header
     let (res, sent) = serve(Some(Vec::from([0u8, 0])));
-    assert!(matches!(
+    assert_eq!(
         res,
-        Ok(Served::Rejected(ServerError::RequestHeaderDeserialize(_)))
-    ));
+        Ok(Served::Rejected(ServerError::RequestHeaderDeserialize(
+            HeaderError::BufferTooShort
+        )))
+    );
     // No header was decoded, so there is no sequence number to copy
+    assert_error_frame(&sent, 0, WireError::SERVER_BAD_HEADER);
+
+    // Unknown operation
+    let mut rqst = frame(Operation::Request, WIRE_VERSION, DOUBLE, &21u32);
+    rqst[1] = 0xFF;
+    let (res, sent) = serve(Some(rqst));
+    assert_eq!(
+        res,
+        Ok(Served::Rejected(ServerError::RequestHeaderDeserialize(
+            HeaderError::UnknownOperation(0xFF)
+        )))
+    );
     assert_error_frame(&sent, 0, WireError::SERVER_BAD_HEADER);
 }
 

@@ -7,7 +7,7 @@ use nprpc::{
     ClientError, ClientIoError, autobuffer,
     interface::Method,
     io::client::{Backend, Io},
-    wire::{HEADER_LEN, Header, Operation, WIRE_VERSION, WireError},
+    wire::{HEADER_LEN, Header, HeaderError, Operation, WIRE_VERSION, WireError},
 };
 use serde::Serialize;
 
@@ -184,5 +184,15 @@ fn request_operation() {
     assert_eq!(
         call(reply),
         Err(ClientIoError::Client(ClientError::ResponseBadOperation))
+    );
+}
+
+#[test]
+fn bad_header() {
+    assert_eq!(
+        call(Vec::from([WIRE_VERSION, 1])),
+        Err(ClientIoError::Client(
+            ClientError::ResponseHeaderDeserialize(HeaderError::BufferTooShort)
+        ))
     );
 }

@@ -6,7 +6,7 @@ use crate::{
     Request, RequestRaw,
     interface::Method,
     io::{Storage, StorageView},
-    wire::{HEADER_LEN, Header, Operation, WIRE_VERSION, WireError},
+    wire::{HEADER_LEN, Header, HeaderError, Operation, WIRE_VERSION, WireError},
 };
 
 /// Raw frame received from or sent to the [`Io`] implementation.
@@ -26,7 +26,7 @@ pub struct RawIoFrame<'data, T> {
 #[non_exhaustive]
 pub enum ServerError {
     /// Received a frame, but failed to deserialize a [`Header`] from the frame.
-    RequestHeaderDeserialize(postcard::Error),
+    RequestHeaderDeserialize(HeaderError),
     /// Received a request with an unexpected operation field.
     RequestWrongOperation,
     /// Received a request with an unexpected version field.
@@ -42,6 +42,9 @@ pub enum ServerError {
     /// Deserialized the request body, but the frame contained extra bytes
     /// after it.
     RequestBodyTrailingBytes,
+    /// Failed to serialize the header of a response, e.g. when the response
+    /// buffer was too small.
+    ResponseHeaderSerialize(HeaderError),
     /// Failed to serialize a response after processing a request.
     ResponseSerialize(postcard::Error),
 }
@@ -119,9 +122,7 @@ pub trait Io {
 
         let remain = hedr
             .write_to(resp_buf)
-            .ok_or(ServerError::ResponseSerialize(
-                postcard::Error::SerializeBufferFull,
-            ))?;
+            .map_err(ServerError::ResponseHeaderSerialize)?;
         let body_len = postcard::to_slice(&err, remain)
             .map_err(ServerError::ResponseSerialize)?
             .len();
@@ -192,10 +193,13 @@ pub fn serve_one_with_dispatcher<B: Backend>(
         return Ok(Served::Idle);
     };
 
-    let Some((hedr, remain)) = Header::read_from(frame.raw) else {
-        let err = ServerError::RequestHeaderDeserialize(postcard::Error::DeserializeUnexpectedEnd);
-        intfc.send_one_error(frame.meta, None, (&err).into(), resp_buf)?;
-        return Ok(Served::Rejected(err));
+    let (hedr, remain) = match Header::read_from(frame.raw) {
+        Ok(h) => h,
+        Err(e) => {
+            let err = ServerError::RequestHeaderDeserialize(e);
+            intfc.send_one_error(frame.meta, None, (&err).into(), resp_buf)?;
+            return Ok(Served::Rejected(err));
+        }
     };
 
     let res = if hedr.op != Operation::Request {
@@ -278,7 +282,6 @@ fn write_response_header<'a>(
         op: Operation::Response,
         ..*rqst_hedr
     };
-    hedr.write_to(out).ok_or(ServerError::ResponseSerialize(
-        postcard::Error::SerializeBufferFull,
-    ))
+    hedr.write_to(out)
+        .map_err(ServerError::ResponseHeaderSerialize)
 }

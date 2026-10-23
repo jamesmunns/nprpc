@@ -42,6 +42,16 @@ impl Operation {
     }
 }
 
+/// Errors when encoding or decoding a [`Header`]
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub enum HeaderError {
+    /// The buffer is shorter than [`HEADER_LEN`].
+    BufferTooShort,
+    /// The operation byte is not a known [`Operation`].
+    UnknownOperation(u8),
+}
+
 /// Frame header, present on every request and response
 ///
 /// The header is not encoded with serde: it has a fixed [`HEADER_LEN`]-byte
@@ -63,31 +73,33 @@ pub struct Header {
 }
 
 impl Header {
-    /// Writes the header to the start of `buf`, returning the remaining bytes
-    /// or `None` if `buf` is too short.
-    pub fn write_to<'a>(&self, buf: &'a mut [u8]) -> Option<&'a mut [u8]> {
-        let (out, rest) = buf.split_first_chunk_mut::<HEADER_LEN>()?;
+    /// Writes the header to the start of `buf`, returning the remaining bytes.
+    pub fn write_to<'a>(&self, buf: &'a mut [u8]) -> Result<&'a mut [u8], HeaderError> {
+        let (out, rest) = buf
+            .split_first_chunk_mut::<HEADER_LEN>()
+            .ok_or(HeaderError::BufferTooShort)?;
         out[0] = self.version;
         out[1] = self.op.to_u8();
         out[2..4].copy_from_slice(&self.seqno.to_le_bytes());
         out[4..12].copy_from_slice(&self.key.to_bytes());
-        Some(rest)
+        Ok(rest)
     }
 
     /// Reads a header from the start of `buf`, returning it and the remaining
-    /// (body) bytes, or `None` if `buf` is too short or the operation is
-    /// unknown.
-    pub fn read_from(buf: &[u8]) -> Option<(Self, &[u8])> {
-        let (h, rest) = buf.split_first_chunk::<HEADER_LEN>()?;
+    /// (body) bytes.
+    pub fn read_from(buf: &[u8]) -> Result<(Self, &[u8]), HeaderError> {
+        let (h, rest) = buf
+            .split_first_chunk::<HEADER_LEN>()
+            .ok_or(HeaderError::BufferTooShort)?;
         let mut key = [0u8; 8];
         key.copy_from_slice(&h[4..12]);
         let hedr = Self {
             version: h[0],
-            op: Operation::from_u8(h[1])?,
+            op: Operation::from_u8(h[1]).ok_or(HeaderError::UnknownOperation(h[1]))?,
             seqno: u16::from_le_bytes([h[2], h[3]]),
             key: Key::from_bytes(key),
         };
-        Some((hedr, rest))
+        Ok((hedr, rest))
     }
 }
 
@@ -115,6 +127,7 @@ impl From<&ServerError> for WireError {
             ServerError::UnknownMethod => Self::SERVER_UNKNOWN_METHOD,
             ServerError::RequestBodyDeserialize(_) => Self::SERVER_BAD_BODY,
             ServerError::RequestBodyTrailingBytes => Self::SERVER_BAD_BODY,
+            ServerError::ResponseHeaderSerialize(_) => Self::SERVER_RESPOND_FAILED,
             ServerError::ResponseSerialize(_) => Self::SERVER_RESPOND_FAILED,
         }
     }
@@ -139,7 +152,7 @@ mod test {
             key: Key::from_bytes([1, 2, 3, 4, 5, 6, 7, 8]),
         };
         let mut buf = [0xFFu8; 16];
-        assert_eq!(hedr.write_to(&mut buf), Some([0xFF; 4].as_mut_slice()));
+        assert_eq!(hedr.write_to(&mut buf), Ok([0xFF; 4].as_mut_slice()));
         assert_eq!(
             buf[..HEADER_LEN],
             [WIRE_VERSION, 1, 0x34, 0x12, 1, 2, 3, 4, 5, 6, 7, 8]
@@ -160,12 +173,21 @@ mod test {
             key: WireError::KEY,
         };
         // Too short to write or read
-        assert_eq!(hedr.write_to(&mut [0u8; HEADER_LEN - 1]), None);
-        assert!(Header::read_from(&[0u8; HEADER_LEN - 1]).is_none());
+        assert_eq!(
+            hedr.write_to(&mut [0u8; HEADER_LEN - 1]),
+            Err(HeaderError::BufferTooShort)
+        );
+        assert_eq!(
+            Header::read_from(&[0u8; HEADER_LEN - 1]),
+            Err(HeaderError::BufferTooShort)
+        );
         // Unknown operation
         let mut buf = [0u8; HEADER_LEN];
         hedr.write_to(&mut buf).unwrap();
         buf[1] = 3;
-        assert!(Header::read_from(&buf).is_none());
+        assert_eq!(
+            Header::read_from(&buf),
+            Err(HeaderError::UnknownOperation(3))
+        );
     }
 }
