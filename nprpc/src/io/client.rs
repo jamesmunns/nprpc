@@ -1,5 +1,7 @@
 use core::fmt::Debug;
 
+use postcard_schema_ng::key::Key;
+
 use crate::{
     Response,
     interface::Method,
@@ -125,70 +127,119 @@ pub trait Backend {
         &'resp mut self,
         rqst: &M::Request<'rqst>,
     ) -> Result<Response<M::Response<'resp>>, ClientIoError<<Self::Io as Io>::Error>> {
-        let seqno = self.next_sequence_number();
-        let (storage, interface) = self.parts();
-        let StorageView { rqst_buf, resp_buf } = storage.buffers();
-
-        // SERIALIZE OUTGOING...
-        let hedr_rqst = Header {
-            op: Operation::Request,
-            version: WIRE_VERSION,
-            seqno,
-            key: M::KEY,
-        };
-        let remain = hedr_rqst
-            .write_to(rqst_buf)
-            .map_err(ClientError::RequestHeaderSerialize)?;
-        let body_len = postcard::to_slice(rqst, remain)
-            .map_err(ClientError::RequestSerialize)?
-            .len();
-        let used = &rqst_buf[..HEADER_LEN + body_len];
-
-        // Exchange...
-        let recvd = interface
-            .send_then_receive_raw_frames(used, resp_buf)
-            .map_err(ClientIoError::Io)?;
-
-        // DESERIALIZE INCOMING
-        let (hedr_resp, body) = Header::read_from(recvd).map_err(|e| match e {
-            HeaderError::UnsupportedVersion(_) => ClientError::ResponseVersionMismatch,
-            e => ClientError::ResponseHeaderDeserialize(e),
+        let RawResponse { hedr, body } = exchange(self, M::KEY, |buf| {
+            postcard::to_slice(rqst, buf)
+                .map(|used| used.len())
+                .map_err(ClientError::RequestSerialize)
         })?;
-
-        // Check that response header matches all the qualities that we
-        // expect...
-
-        // The server replies with an error if it couldn't serve our request.
-        // If it couldn't decode our header at all, it doesn't know our
-        // sequence number, and uses `0` instead.
-        if hedr_resp.op == Operation::ErrorResponse {
-            if hedr_resp.seqno != hedr_rqst.seqno && hedr_resp.seqno != 0 {
-                return Err(ClientError::ResponseBadSeqno.into());
-            }
-            if hedr_resp.key != WireError::KEY {
-                return Err(ClientError::ResponseKeyMismatch.into());
-            }
-            let err = take_body::<WireError>(body)?;
-            return Err(ClientError::Server(err).into());
-        }
-        if hedr_resp.op != Operation::Response {
-            return Err(ClientError::ResponseBadOperation.into());
-        }
-        if hedr_resp.seqno != hedr_rqst.seqno {
-            return Err(ClientError::ResponseBadSeqno.into());
-        }
-        if hedr_resp.key != hedr_rqst.key {
-            return Err(ClientError::ResponseKeyMismatch.into());
-        }
-
-        // Happy with the header, get the body
         let body = take_body::<M::Response<'resp>>(body)?;
+        Ok(Response { hedr, body })
+    }
 
-        Ok(Response {
-            hedr: hedr_resp,
-            body,
+    /// Like [`Backend::send_then_receive_typed_frames`], but with an already
+    /// serialized request body, and returning the response body without
+    /// deserializing it.
+    ///
+    /// This is useful for clients that don't know the types of the interface
+    /// statically, e.g. ones that transcode requests and responses using the
+    /// interface's schemas. The caller is responsible for using the right
+    /// `key` for the request body.
+    ///
+    /// The response header is checked the same way as for typed frames.
+    fn send_then_receive_raw<'resp>(
+        &'resp mut self,
+        key: Key,
+        rqst_body: &[u8],
+    ) -> Result<RawResponse<'resp>, ClientIoError<<Self::Io as Io>::Error>> {
+        exchange(self, key, |buf| {
+            buf.get_mut(..rqst_body.len())
+                .ok_or(ClientError::RequestSerialize(
+                    postcard::Error::SerializeBufferFull,
+                ))?
+                .copy_from_slice(rqst_body);
+            Ok(rqst_body.len())
         })
     }
+}
+
+/// A response with a body that has not been deserialized
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RawResponse<'resp> {
+    pub hedr: Header,
+    pub body: &'resp [u8],
+}
+
+/// Sends a request, and receives and checks the response header.
+///
+/// `write_body` writes the request body to the given buffer, returning the
+/// number of bytes used.
+fn exchange<'resp, B, F>(
+    backend: &'resp mut B,
+    key: Key,
+    write_body: F,
+) -> Result<RawResponse<'resp>, ClientIoError<<B::Io as Io>::Error>>
+where
+    B: Backend + ?Sized,
+    F: FnOnce(&mut [u8]) -> Result<usize, ClientError>,
+{
+    let seqno = backend.next_sequence_number();
+    let (storage, interface) = backend.parts();
+    let StorageView { rqst_buf, resp_buf } = storage.buffers();
+
+    // SERIALIZE OUTGOING...
+    let hedr_rqst = Header {
+        op: Operation::Request,
+        version: WIRE_VERSION,
+        seqno,
+        key,
+    };
+    let remain = hedr_rqst
+        .write_to(rqst_buf)
+        .map_err(ClientError::RequestHeaderSerialize)?;
+    let body_len = write_body(remain)?;
+    let used = &rqst_buf[..HEADER_LEN + body_len];
+
+    // Exchange...
+    let recvd = interface
+        .send_then_receive_raw_frames(used, resp_buf)
+        .map_err(ClientIoError::Io)?;
+
+    // DESERIALIZE INCOMING
+    let (hedr_resp, body) = Header::read_from(recvd).map_err(|e| match e {
+        HeaderError::UnsupportedVersion(_) => ClientError::ResponseVersionMismatch,
+        e => ClientError::ResponseHeaderDeserialize(e),
+    })?;
+
+    // Check that response header matches all the qualities that we
+    // expect...
+
+    // The server replies with an error if it couldn't serve our request.
+    // If it couldn't decode our header at all, it doesn't know our
+    // sequence number, and uses `0` instead.
+    if hedr_resp.op == Operation::ErrorResponse {
+        if hedr_resp.seqno != hedr_rqst.seqno && hedr_resp.seqno != 0 {
+            return Err(ClientError::ResponseBadSeqno.into());
+        }
+        if hedr_resp.key != WireError::KEY {
+            return Err(ClientError::ResponseKeyMismatch.into());
+        }
+        let err = take_body::<WireError>(body)?;
+        return Err(ClientError::Server(err).into());
+    }
+    if hedr_resp.op != Operation::Response {
+        return Err(ClientError::ResponseBadOperation.into());
+    }
+    if hedr_resp.seqno != hedr_rqst.seqno {
+        return Err(ClientError::ResponseBadSeqno.into());
+    }
+    if hedr_resp.key != hedr_rqst.key {
+        return Err(ClientError::ResponseKeyMismatch.into());
+    }
+
+    Ok(RawResponse {
+        hedr: hedr_resp,
+        body,
+    })
 }
 
 /// Deserializes a response body, which must use all of `body`

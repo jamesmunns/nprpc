@@ -206,3 +206,46 @@ fn version_mismatch() {
         Err(ClientIoError::Client(ClientError::ResponseVersionMismatch))
     );
 }
+
+#[test]
+fn raw_response() {
+    // A raw call sees the same frame as a typed call, without (de)serializing
+    let reply = frame(Operation::Response, 42, DOUBLE, &42u32);
+    let mut backend = TestBackend {
+        bufs: Bufs::new(),
+        io: FakeIo { reply },
+    };
+    let resp = backend.send_then_receive_raw(DOUBLE, &[21]).unwrap();
+    assert_eq!(resp.hedr.key, DOUBLE);
+    assert_eq!(resp.hedr.seqno, 42);
+    // Small `u32`s are a single varint byte
+    assert_eq!(resp.body, &[42]);
+}
+
+#[test]
+fn raw_checks_header() {
+    // The response header is checked against the raw request's key
+    let reply = frame(Operation::Response, 42, WireError::KEY, &42u32);
+    let mut backend = TestBackend {
+        bufs: Bufs::new(),
+        io: FakeIo { reply },
+    };
+    assert_eq!(
+        backend.send_then_receive_raw(DOUBLE, &[21]),
+        Err(ClientIoError::Client(ClientError::ResponseKeyMismatch))
+    );
+}
+
+#[test]
+fn raw_request_too_large() {
+    let mut backend = TestBackend {
+        bufs: Bufs::new(),
+        io: FakeIo { reply: vec![] },
+    };
+    assert_eq!(
+        backend.send_then_receive_raw(DOUBLE, &[0; 64]),
+        Err(ClientIoError::Client(ClientError::RequestSerialize(
+            postcard::Error::SerializeBufferFull
+        )))
+    );
+}
