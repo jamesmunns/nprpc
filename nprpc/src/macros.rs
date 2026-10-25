@@ -156,6 +156,9 @@ macro_rules! interface {
                 use super::*;
                 use $crate::interface::{MethodInfo, InterfaceInfo, Method};
 
+                /// The name of this interface
+                pub const NAME: &str = stringify!($mod_name);
+
                 /// A list of [`MethodInfo`] for all methods of this interface
                 const ALL_METHOD_INFOS: &[MethodInfo] = &[
                     $(
@@ -344,6 +347,10 @@ macro_rules! compose_interfaces {
                 #[allow(unused_imports)]
                 use super::*;
                 use $crate::interface::{MethodInfo, InterfaceInfo};
+
+                /// The name of this interface
+                pub const NAME: &str = stringify!($mod_name);
+
                 pub const ALL_METHOD_INFOS: &[MethodInfo] = {
                     const SETS: &[&[MethodInfo]] = &[
                         $(
@@ -477,6 +484,77 @@ macro_rules! compose_interfaces {
                 }
             }
         }
+    };
+}
+
+/// Defines a `static` containing a [`FlatInterface`] for a given interface
+///
+/// A [`FlatInterface`] contains the names, keys, and schemas of all methods
+/// of the interface, de-duplicated, and contains no references. This makes it suitable for
+/// placing in a non-loaded (debug only) linker section, to be read out of the
+/// binary by a debugger. See the [`flat`] module for more details.
+///
+/// Attributes, such as `#[used]` or `#[unsafe(link_section = "...")]`, are
+/// applied to the `static`.
+///
+/// ```rust
+/// use nprpc::{interface, flat_interface};
+///
+/// interface! {
+///     mod example {
+///         fn method(u32) -> Option<u64>;
+///     }
+/// }
+///
+/// flat_interface! {
+///     #[used]
+///     static EXAMPLE_SCHEMA = example;
+/// }
+///
+/// assert_eq!(EXAMPLE_SCHEMA.methods.len(), 1);
+/// ```
+///
+/// [`FlatInterface`]: crate::flat::FlatInterface
+/// [`flat`]: crate::flat
+#[macro_export]
+macro_rules! flat_interface {
+    (
+        $(#[$attr:meta])*
+        $vis:vis static $name:ident = $($segment:ident)::+;
+    ) => {
+        // Building a `FlatInterface` takes several const passes, and each
+        // const generic argument is evaluated separately. To only evaluate
+        // each pass once, the results are kept in associated consts of a
+        // helper struct. A braced struct is only in the type namespace, so it
+        // can share the static's name without conflicting with it.
+        #[doc(hidden)]
+        #[allow(non_camel_case_types)]
+        struct $name {}
+
+        impl $name {
+            const SCRATCH: $crate::flat::FlatLengths = $crate::flat::flat_scratch(
+                $($segment)::+::info::NAME,
+                &$($segment)::+::info::INTERFACE_INFO,
+            );
+            const BUILT: $crate::flat::FlatScratch<
+                { $name::SCRATCH.methods },
+                { $name::SCRATCH.nodes },
+                { $name::SCRATCH.children },
+                { $name::SCRATCH.names },
+            > = $crate::flat::FlatScratch::new(
+                $($segment)::+::info::NAME,
+                &$($segment)::+::info::INTERFACE_INFO,
+            );
+            const LENS: $crate::flat::FlatLengths = $name::BUILT.lengths();
+        }
+
+        $(#[$attr])*
+        $vis static $name: $crate::flat::FlatInterface<
+            { $name::LENS.methods },
+            { $name::LENS.nodes },
+            { $name::LENS.children },
+            { $name::LENS.names },
+        > = $crate::flat::FlatInterface::new(&$name::BUILT);
     };
 }
 

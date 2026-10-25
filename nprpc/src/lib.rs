@@ -230,6 +230,7 @@
 mod macro_support;
 mod macros;
 
+pub mod flat;
 pub mod interface;
 pub mod io;
 pub mod wire;
