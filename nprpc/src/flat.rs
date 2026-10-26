@@ -21,8 +21,8 @@
 //! Because we are building at compile time, we need to Do Trickery to obtain
 //! right-sized arrays in const context. We use a mix of decl macros and const
 //! fns to achieve this. This is very similar to how `postcard-rpc` tackled
-//! similar problems. This module holds the const-fns, see the module
-//! [`macros`](crate::macros) for the macro parts.
+//! similar problems. This module holds the const-fns, see
+//! [`flat_interface!`] for the macro parts.
 //!
 //! Building works using the following main `const fn`s in this order:
 //!
