@@ -2,6 +2,7 @@
 resolver = "3"
 members = ["demo/demo-api",
   "nprpc",
+  "nprpc-udp",
   "demo/*",
 ]
 

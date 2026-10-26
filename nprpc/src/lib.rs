@@ -26,6 +26,8 @@
 //!       as request/response data payloads.
 //!     * Can work over any transport, clients and servers both have `Io` traits
 //!       for custom plumbing.
+//!     * [`nprpc-udp`](https://docs.rs/nprpc-udp) provides blocking clients
+//!       and servers over `std` UDP sockets.
 //!     * For bounded types, maximum message sizes can be calculated, and
 //!       necessary buffer sizes are generated as `const`s.
 //! * Support for flexible data payloads:

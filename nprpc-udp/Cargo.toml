@@ -1,0 +1,21 @@
+[package]
+name = "nprpc-udp"
+version = "2.1.0"
+authors = ["James Munns <me@jamesmunns.com>"]
+edition = "2024"
+readme = "README.md"
+repository = "https://github.com/jamesmunns/nprpc"
+description = "Blocking UDP clients and servers for nprpc"
+license = "MPL-2.0"
+categories = []
+keywords = [
+    "serde",
+]
+documentation = "https://docs.rs/nprpc-udp/"
+
+[dependencies]
+nprpc = { version = "2.1.0", path = "../nprpc", features = ["std"] }
+
+[dev-dependencies]
+postcard-schema-ng.workspace = true
+serde = { version = "1.0.229", default-features = false, features = ["derive"] }
