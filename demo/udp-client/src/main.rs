@@ -1,28 +1,18 @@
-use std::{net::UdpSocket, num::Wrapping, time::Duration};
+use std::time::Duration;
 
-use nprpc::{
-    autobuffer,
-    io::{
-        Storage,
-        client::{Backend, Io},
-    },
-};
+use nprpc::autobuffer;
+use nprpc_udp::UdpClient;
 
 use udp_api::hello::Client as _;
 use udp_api::kv::Client as _;
 autobuffer!(ApiBufs, udp_api::composite);
 
 fn main() {
-    let socket = UdpSocket::bind("127.0.0.1:3400").expect("couldn't bind to address");
-    socket
-        .connect("127.0.0.1:5501")
-        .expect("connect function failed");
-
-    let mut client = MyClient {
-        buf: ApiBufs::new(),
-        socket: ConnectedUdpSocket(socket),
-        ctr: Wrapping(0),
-    };
+    let mut client = UdpClient::connect("127.0.0.1:5501".parse().unwrap(), ApiBufs::new())
+        .expect("couldn't connect");
+    client
+        .set_timeout(Some(Duration::from_secs(1)))
+        .expect("couldn't set timeout");
 
     for i in 0..3 {
         let got = client.loopback(&i).unwrap();
@@ -40,50 +30,5 @@ fn main() {
         let _ = client.set_name(&new_name).unwrap();
 
         std::thread::sleep(Duration::from_secs(1));
-    }
-}
-
-/////
-// TODO: Items below here should probably be in `nprpc` as standard interface
-// impls.
-//
-struct ConnectedUdpSocket(UdpSocket);
-
-impl Io for ConnectedUdpSocket {
-    type Error = std::io::Error;
-    fn send_then_receive_raw_frames<'a>(
-        &mut self,
-        outgoing: &[u8],
-        incoming: &'a mut [u8],
-    ) -> Result<&'a [u8], Self::Error> {
-        self.0.send(outgoing)?;
-        let used = self.0.recv(incoming)?;
-        Ok(&incoming[..used])
-    }
-}
-
-struct MyClient<S: Storage> {
-    ctr: Wrapping<u16>,
-    buf: S,
-    socket: ConnectedUdpSocket,
-}
-
-impl<S: Storage> Backend for MyClient<S> {
-    type Storage = S;
-    type Io = ConnectedUdpSocket;
-
-    fn next_sequence_number(&mut self) -> u16 {
-        let now = self.ctr;
-        self.ctr += 1;
-        now.0
-    }
-
-    fn parts(&mut self) -> (&mut Self::Storage, &mut Self::Io) {
-        let Self {
-            ctr: _,
-            buf,
-            socket,
-        } = self;
-        (buf, socket)
     }
 }

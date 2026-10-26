@@ -397,6 +397,7 @@ name = "udp-client"
 version = "0.1.0"
 dependencies = [
  "nprpc",
+ "nprpc-udp",
  "postcard",
  "postcard-schema-ng",
  "udp-api",
@@ -407,6 +408,7 @@ name = "udp-server"
 version = "0.1.0"
 dependencies = [
  "nprpc",
+ "nprpc-udp",
  "postcard",
  "postcard-schema-ng",
  "udp-api",
