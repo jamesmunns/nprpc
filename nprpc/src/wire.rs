@@ -135,6 +135,25 @@ impl WireError {
     pub const KEY: Key = Key::for_path::<Self>("error");
 }
 
+impl core::fmt::Display for WireError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let what = match *self {
+            WireError::SERVER_BAD_HEADER => "bad header",
+            WireError::SERVER_UNEXPECTED_METHOD => "unexpected operation",
+            WireError::SERVER_VERSION_MISMATCH => "wire version mismatch",
+            WireError::SERVER_UNKNOWN_METHOD => {
+                "unknown method; does the archive match the target?"
+            }
+            WireError::SERVER_BAD_BODY => "bad request body",
+            WireError::SERVER_RESPOND_FAILED => "failed to respond",
+            _ => "unknown error",
+        };
+        write!(f, "{what} ({})", self.0)
+    }
+}
+
+impl core::error::Error for WireError {}
+
 impl From<&ServerError> for WireError {
     fn from(value: &ServerError) -> Self {
         match value {
