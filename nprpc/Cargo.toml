@@ -1,6 +1,6 @@
 [package]
 name = "nprpc"
-version = "2.1.1"
+version = "2.1.2"
 authors = ["James Munns <me@jamesmunns.com>"]
 edition = "2024"
 readme = "README.md"
@@ -24,7 +24,8 @@ rustdoc-args = ["--cfg", "docsrs"]
 postcard.workspace = true
 postcard-schema-ng.workspace = true
 serde = { version = "1.0.229", default-features = false, features = ["derive"] }
+thiserror.workspace = true
 
 [features]
-std = ["postcard-schema-ng/use-std"]
+std = ["postcard-schema-ng/use-std", "thiserror/std"]
 default = ["std"]

@@ -14,56 +14,44 @@ use crate::{
 /// Can either be an `Io` error with the underlying I/O (while exchanging
 /// frames), or a `Client` error, if the frame contained invalid or
 /// unexpected data.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, thiserror::Error)]
 #[non_exhaustive]
 pub enum ClientIoError<E> {
-    /// Experienced an error while performing protocol operations.
-    Client(ClientError),
-    /// Experienced an error with the underlying I/O layer while exchanging
-    /// frames.
-    Io(E),
+    #[error("Experienced an error while performing protocol operations.")]
+    Client(#[from] ClientError),
+    #[error("Experienced an error with the underlying I/O layer while exchanging frames.")]
+    Io(#[source] E),
 }
 
 /// Client Errors
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, thiserror::Error)]
 #[non_exhaustive]
 pub enum ClientError {
-    /// Failed to serialize the header of the request, e.g. when the request
-    /// buffer was too small.
-    RequestHeaderSerialize(HeaderError),
-    /// Failed to serialize the request.
-    RequestSerialize(postcard::Error),
+    #[error("failed to serialize the header of the request")]
+    RequestHeaderSerialize(#[source] HeaderError),
+    #[error("failed to serialize the request")]
+    RequestSerialize(#[source] postcard::Error),
     /// Received a response, but unable to deserialize a header from the
     /// (alleged) response.
     ///
     /// A version mismatch is reported as [`ClientError::ResponseVersionMismatch`]
     /// instead.
-    ResponseHeaderDeserialize(HeaderError),
-    /// Received a reasonable `Header`, but unable to deserialize the body
-    /// of the request.
-    ResponseBodyDeserialize(postcard::Error),
-    /// Deserialized the response body, but the frame contained extra bytes
-    /// after it.
+    #[error("Received a response, but unable to deserialize a header from the (alleged) response")]
+    ResponseHeaderDeserialize(#[source] HeaderError),
+    #[error("Received a reasonable `Header`, but unable to deserialize the body of the request")]
+    ResponseBodyDeserialize(#[source] postcard::Error),
+    #[error("Deserialized the response body, but the frame contained extra bytes after it")]
     ResponseBodyTrailingBytes,
-    /// The client and server disagreed on the protocol version
+    #[error("The client and server disagreed on the protocol version")]
     ResponseVersionMismatch,
-    /// The response contained an unexpected Operation field.
+    #[error("The response contained an unexpected Operation field")]
     ResponseBadOperation,
-    /// The response contained an unexpected sequence number.
+    #[error("The response contained an unexpected sequence number")]
     ResponseBadSeqno,
-    /// The response contained an unexpected type tag [`Key`].
-    ///
-    /// [`Key`]: postcard_schema_ng::key::Key
+    #[error("The response contained an unexpected type tag `Key`")]
     ResponseKeyMismatch,
-    /// The server was unable to serve the request, and replied with an
-    /// error instead.
+    #[error("The server was unable to serve the request, and replied with an error instead.")]
     Server(WireError),
-}
-
-impl<E> From<ClientError> for ClientIoError<E> {
-    fn from(value: ClientError) -> Self {
-        Self::Client(value)
-    }
 }
 
 /// The `Io` abstraction for a client

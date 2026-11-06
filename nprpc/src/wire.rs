@@ -47,14 +47,14 @@ impl Operation {
 }
 
 /// Errors when encoding or decoding a [`Header`]
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 #[non_exhaustive]
 pub enum HeaderError {
-    /// The buffer is shorter than [`HEADER_LEN`].
+    #[error("The buffer is shorter than `HEADER_LEN`")]
     BufferTooShort,
-    /// The version byte is not [`WIRE_VERSION`].
+    #[error("The version byte is not `WIRE_VERSION`, got: {0}")]
     UnsupportedVersion(u8),
-    /// The operation byte is not a known [`Operation`].
+    #[error("The operation byte is not a known `Operation`, got: {0}")]
     UnknownOperation(u8),
 }
 

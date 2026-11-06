@@ -21,53 +21,39 @@ pub struct RawIoFrame<'data, T> {
 }
 
 /// Server Errors
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, thiserror::Error)]
 #[non_exhaustive]
 pub enum ServerError {
-    /// Received a frame, but failed to deserialize a [`Header`] from the frame.
-    ///
-    /// A version mismatch is reported as [`ServerError::RequestVersionMismatch`]
-    /// instead.
-    RequestHeaderDeserialize(HeaderError),
-    /// Received a request with an unexpected operation field.
+    #[error("received a frame, but failed to deserialize a [`Header`] from the frame")]
+    RequestHeaderDeserialize(#[source] HeaderError),
+    #[error("received a request with an unexpected operation field")]
     RequestWrongOperation,
-    /// Received a request with an unexpected version field.
+    #[error("received a request with an unexpected version field.")]
     RequestVersionMismatch,
-    /// Received a request for a [`Method`]'s [`Key`] that this server is not
-    /// capable of handling
-    ///
-    /// [`Key`]: postcard_schema_ng::key::Key
-    /// [`Method`]: crate::interface::Method
+    #[error(
+        "received a request for a `Method`'s `Key` that this server is not capable of handling"
+    )]
     UnknownMethod,
-    /// Received a frame and deserialized the header, but failed to deserialize
-    /// the request body.
-    RequestBodyDeserialize(postcard::Error),
-    /// Deserialized the request body, but the frame contained extra bytes
-    /// after it.
+    #[error(
+        "received a frame and deserialized the header, but failed to deserialize the request body"
+    )]
+    RequestBodyDeserialize(#[source] postcard::Error),
+    #[error("deserialized the request body, but the frame contained extra bytes after it")]
     RequestBodyTrailingBytes,
-    /// Failed to serialize the header of a response, e.g. when the response
-    /// buffer was too small.
-    ResponseHeaderSerialize(HeaderError),
-    /// Failed to serialize a response after processing a request.
-    ResponseSerialize(postcard::Error),
+    #[error("failed to serialize the header of a response")]
+    ResponseHeaderSerialize(#[source] HeaderError),
+    #[error("failed to serialize a response after processing a request")]
+    ResponseSerialize(#[source] postcard::Error),
 }
 
 /// Error with the server
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, thiserror::Error)]
 #[non_exhaustive]
 pub enum ServerIoError<E> {
-    /// The server failed to produce a frame to send, e.g. when the response
-    /// buffer was too small.
-    Server(ServerError),
-    /// An error with the underlying `Io` implementation, e.g. when we failed
-    /// to exchange frames.
-    Io(E),
-}
-
-impl<E> From<ServerError> for ServerIoError<E> {
-    fn from(value: ServerError) -> Self {
-        Self::Server(value)
-    }
+    #[error("the server failed to produce a frame to send")]
+    Server(#[from] ServerError),
+    #[error("an error with the underlying `Io` implementation")]
+    Io(#[source] E),
 }
 
 /// The `Io` abstraction for a server
